@@ -238,7 +238,7 @@ export default function FeaturedCollection() {
         "
       >
         <Link
-          href="#best"
+          href="/shop"
           className="btn-outline-light"
         >
           EXPLORE FULL COLLECTION →

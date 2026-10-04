@@ -8,7 +8,7 @@ gsap.registerPlugin(ScrollTrigger)
 
 /* =========================================================
    GOLD CORNER ORNAMENT
-   ========================================================= */
+   =====F==================================================== */
 
 function GoldCorner({
   position,
@@ -407,7 +407,7 @@ export default function Hero() {
             className="hero-buttons-v2"
           >
             <Link
-              href="#new"
+              href="/shop"
               className="hero-primary-button"
             >
               <span>

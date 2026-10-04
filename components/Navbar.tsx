@@ -166,7 +166,7 @@ export default function Navbar() {
             )}
           </button>
 
-          <Link href="#new" className="nav-cta">
+          <Link href="/shop" className="nav-cta">
             SHOP NOW
           </Link>
         </div>
@@ -214,7 +214,7 @@ export default function Navbar() {
           ))}
           <div style={{ marginTop: 32 }}>
             <Link
-              href="#new"
+              href="/shop"
               className="btn-primary"
               onClick={closeMenu}
               style={{ display: 'inline-flex' }}
