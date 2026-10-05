@@ -1,21 +1,40 @@
+const crypto = require("crypto");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
 const Address = require("../models/Address");
+const {
+  FREE_SHIPPING_THRESHOLD,
+  SHIPPING_FEE,
+  ORDER_STATUSES,
+  canTransitionOrder,
+} = require("../config/constants");
+const { reserveStock, restoreStock } = require("../services/inventory.service");
+const {
+  isValidObjectId,
+  parsePagination,
+  buildPagination,
+} = require("../utils/helpers");
 
 const generateOrderNumber = () => {
-  const timestamp = Date.now();
-  const random = Math.floor(1000 + Math.random() * 9000);
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = crypto.randomBytes(3).toString("hex").toUpperCase();
 
   return `DHAAGA-${timestamp}-${random}`;
 };
 
-const createOrder = async (req, res) => {
+const createOrder = async (req, res, next) => {
   try {
     const { addressId, paymentMethod } = req.body;
 
     if (!addressId || !paymentMethod) {
       return res.status(400).json({
         message: "Address and payment method are required",
+      });
+    }
+
+    if (!isValidObjectId(addressId)) {
+      return res.status(400).json({
+        message: "Invalid address ID",
       });
     }
 
@@ -46,87 +65,100 @@ const createOrder = async (req, res) => {
       });
     }
 
+    // Build order lines from current database data (never from the client).
     let subtotal = 0;
+    const orderItems = [];
 
-    const orderItems = cart.items.map((item) => {
+    for (const item of cart.items) {
       const product = item.product;
 
+      if (!product || !product.isActive) {
+        return res.status(400).json({
+          message: "An item in your cart is no longer available",
+        });
+      }
+
       const variant = product.variants.find(
-        (variant) =>
-          variant.size === item.size &&
-          variant.color === item.color
+        (v) => v.size === item.size && v.color === item.color
       );
 
       if (!variant) {
-        throw new Error(
-          `Variant unavailable for ${product.name}`
-        );
+        return res.status(400).json({
+          message: `Variant unavailable for ${product.name}`,
+        });
       }
 
       if (variant.stock < item.quantity) {
-        throw new Error(
-          `Insufficient stock for ${product.name}`
-        );
+        return res.status(409).json({
+          message: `Insufficient stock for ${product.name}`,
+        });
       }
 
-      const itemPrice = product.price;
+      subtotal += product.price * item.quantity;
 
-      subtotal += itemPrice * item.quantity;
-
-      return {
+      orderItems.push({
         product: product._id,
         productName: product.name,
         productImage: product.images?.[0] || "",
         size: item.size,
         color: item.color,
-        price: itemPrice,
+        price: product.price,
         quantity: item.quantity,
-      };
-    });
+      });
+    }
 
-    const shippingFee = subtotal >= 1999 ? 0 : 99;
-
+    const shippingFee = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : SHIPPING_FEE;
     const totalAmount = subtotal + shippingFee;
 
-    const order = await Order.create({
-      user: req.user.userId,
+    // Atomically deduct stock. Prevents two buyers taking the last item.
+    const reservation = await reserveStock(orderItems);
 
-      items: orderItems,
+    if (!reservation.ok) {
+      return res.status(409).json({
+        message: `Insufficient stock for ${reservation.failedLine.productName}`,
+      });
+    }
 
-      shippingAddress: {
-        fullName: address.fullName,
-        phone: address.phone,
-        addressLine1: address.addressLine1,
-        addressLine2: address.addressLine2,
-        city: address.city,
-        state: address.state,
-        pincode: address.pincode,
-        country: address.country,
-      },
+    let order;
 
-      subtotal,
-      shippingFee,
-      totalAmount,
+    try {
+      order = await Order.create({
+        user: req.user.userId,
+        items: orderItems,
+        shippingAddress: {
+          fullName: address.fullName,
+          phone: address.phone,
+          addressLine1: address.addressLine1,
+          addressLine2: address.addressLine2,
+          city: address.city,
+          state: address.state,
+          pincode: address.pincode,
+          country: address.country,
+        },
+        subtotal,
+        shippingFee,
+        totalAmount,
+        paymentMethod,
+        orderNumber: generateOrderNumber(),
+      });
+    } catch (error) {
+      await restoreStock(orderItems);
+      throw error;
+    }
 
-      paymentMethod,
-
-      orderNumber: generateOrderNumber(),
-    });
+    // Order placed: empty the cart.
+    await Cart.updateOne({ _id: cart._id }, { $set: { items: [] } });
 
     res.status(201).json({
       message: "Order created successfully",
       order,
     });
   } catch (error) {
-    console.error("Create order error:", error);
-
-    res.status(500).json({
-      message: error.message || "Something went wrong",
-    });
+    next(error);
   }
 };
 
-const getMyOrders = async (req, res) => {
+const getMyOrders = async (req, res, next) => {
   try {
     const orders = await Order.find({
       user: req.user.userId,
@@ -138,15 +170,11 @@ const getMyOrders = async (req, res) => {
       orders,
     });
   } catch (error) {
-    console.error("Get orders error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-const getOrderById = async (req, res) => {
+const getOrderById = async (req, res, next) => {
   try {
     const order = await Order.findOne({
       _id: req.params.id,
@@ -163,48 +191,76 @@ const getOrderById = async (req, res) => {
       order,
     });
   } catch (error) {
-    console.error("Get order error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-const getAllOrders = async (req, res) => {
+// Admin: ?page=&limit=&status=&paymentStatus=
+const getAllOrders = async (req, res, next) => {
   try {
-    const orders = await Order.find()
-      .populate("user", "name email")
-      .sort({
-        createdAt: -1,
-      });
+    const { status, paymentStatus } = req.query;
+    const pagination = parsePagination(req.query, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
+
+    const filter = {};
+
+    if (typeof status === "string" && ORDER_STATUSES.includes(status)) {
+      filter.orderStatus = status;
+    }
+
+    if (
+      typeof paymentStatus === "string" &&
+      ["pending", "paid", "failed", "refunded"].includes(paymentStatus)
+    ) {
+      filter.paymentStatus = paymentStatus;
+    }
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .populate("user", "name email")
+        .sort({ createdAt: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit),
+      Order.countDocuments(filter),
+    ]);
 
     res.status(200).json({
       orders,
+      pagination: buildPagination(pagination, total),
     });
   } catch (error) {
-    console.error("Get all orders error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-const updateOrderStatus = async (req, res) => {
+const getAdminOrderById = async (req, res, next) => {
+  try {
+    const order = await Order.findById(req.params.id).populate(
+      "user",
+      "name email"
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        message: "Order not found",
+      });
+    }
+
+    res.status(200).json({
+      order,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateOrderStatus = async (req, res, next) => {
   try {
     const { orderStatus } = req.body;
 
-    const allowedStatuses = [
-      "pending",
-      "confirmed",
-      "processing",
-      "shipped",
-      "delivered",
-      "cancelled",
-    ];
-
-    if (!allowedStatuses.includes(orderStatus)) {
+    if (!ORDER_STATUSES.includes(orderStatus)) {
       return res.status(400).json({
         message: "Invalid order status",
       });
@@ -218,20 +274,47 @@ const updateOrderStatus = async (req, res) => {
       });
     }
 
-    order.orderStatus = orderStatus;
+    if (!canTransitionOrder(order.orderStatus, orderStatus)) {
+      return res.status(400).json({
+        message: `Cannot change order from "${order.orderStatus}" to "${orderStatus}"`,
+      });
+    }
 
-    await order.save();
+    const update = { orderStatus };
+
+    // Cash on delivery is collected when the order is delivered.
+    if (
+      orderStatus === "delivered" &&
+      order.paymentMethod === "cod" &&
+      order.paymentStatus === "pending"
+    ) {
+      update.paymentStatus = "paid";
+    }
+
+    // Compare-and-set so two simultaneous requests cannot both apply
+    // (important for cancellation, which returns stock).
+    const updatedOrder = await Order.findOneAndUpdate(
+      { _id: order._id, orderStatus: order.orderStatus },
+      { $set: update },
+      { new: true }
+    );
+
+    if (!updatedOrder) {
+      return res.status(409).json({
+        message: "Order was modified by someone else, please retry",
+      });
+    }
+
+    if (orderStatus === "cancelled") {
+      await restoreStock(order.items);
+    }
 
     res.status(200).json({
       message: "Order status updated successfully",
-      order,
+      order: updatedOrder,
     });
   } catch (error) {
-    console.error("Update order status error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
@@ -240,5 +323,6 @@ module.exports = {
   getMyOrders,
   getOrderById,
   getAllOrders,
+  getAdminOrderById,
   updateOrderStatus,
 };

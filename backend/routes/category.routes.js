@@ -10,6 +10,7 @@ const {
 
 const { protect } = require("../middleware/auth.middleware");
 const { admin } = require("../middleware/admin.middleware");
+const { validateObjectId } = require("../middleware/validate.middleware");
 
 const router = express.Router();
 
@@ -24,6 +25,7 @@ router.put(
   "/admin/:id",
   protect,
   admin,
+  validateObjectId("id"),
   updateCategory
 );
 
@@ -31,6 +33,7 @@ router.delete(
   "/admin/:id",
   protect,
   admin,
+  validateObjectId("id"),
   deleteCategory
 );
 

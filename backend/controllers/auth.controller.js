@@ -1,19 +1,67 @@
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
 const User = require("../models/User");
 
-const registerUser = async (req, res) => {
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Compared against when the email is unknown so response time does not
+// reveal which emails are registered.
+const DUMMY_HASH = bcrypt.hashSync("dhaaga-dummy-password", 12);
+
+const cookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+});
+
+const registerUser = async (req, res, next) => {
   try {
     const { name, email, password } = req.body;
 
-    // Check required fields
     if (!name || !email || !password) {
       return res.status(400).json({
         message: "Name, email and password are required",
       });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    // Reject non-strings (prevents NoSQL operator injection like {"$ne": null})
+    if (
+      typeof name !== "string" ||
+      typeof email !== "string" ||
+      typeof password !== "string"
+    ) {
+      return res.status(400).json({
+        message: "Name, email and password must be strings",
+      });
+    }
+
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      return res.status(400).json({
+        message: "Name must be between 2 and 80 characters",
+      });
+    }
+
+    if (!EMAIL_REGEX.test(cleanEmail)) {
+      return res.status(400).json({
+        message: "Please provide a valid email address",
+      });
+    }
+
+    // Validated on the plain password. (The schema minlength only ever sees
+    // the bcrypt hash, so it cannot enforce this.) bcrypt ignores > 72 bytes.
+    if (password.length < 8 || Buffer.byteLength(password) > 72) {
+      return res.status(400).json({
+        message: "Password must be 8 to 72 characters long",
+      });
+    }
+
+    const existingUser = await User.findOne({ email: cleanEmail });
 
     if (existingUser) {
       return res.status(409).json({
@@ -21,15 +69,26 @@ const registerUser = async (req, res) => {
       });
     }
 
-    // Hash password
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // Create user
-    const user = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
+    let user;
+
+    try {
+      user = await User.create({
+        name: cleanName,
+        email: cleanEmail,
+        password: hashedPassword,
+      });
+    } catch (error) {
+      // Two simultaneous registrations with the same email
+      if (error.code === 11000) {
+        return res.status(409).json({
+          message: "User already exists",
+        });
+      }
+
+      throw error;
+    }
 
     res.status(201).json({
       message: "User registered successfully",
@@ -40,51 +99,40 @@ const registerUser = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Registration error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-
-
-const jwt = require("jsonwebtoken");
-
-const loginUser = async (req, res) => {
+const loginUser = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Check required fields
     if (!email || !password) {
       return res.status(400).json({
         message: "Email and password are required",
       });
     }
 
-    // Find user
-    const user = await User.findOne({ email });
+    if (typeof email !== "string" || typeof password !== "string") {
+      return res.status(400).json({
+        message: "Email and password must be strings",
+      });
+    }
 
-    if (!user) {
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    });
+
+   const isPasswordCorrect = user?.password
+  ? await bcrypt.compare(password, user.password)
+  : await bcrypt.compare(password, DUMMY_HASH);
+
+    if (!user || !isPasswordCorrect) {
       return res.status(401).json({
         message: "Invalid email or password",
       });
     }
 
-    // Compare password
-    const isPasswordCorrect = await bcrypt.compare(
-      password,
-      user.password
-    );
-
-    if (!isPasswordCorrect) {
-      return res.status(401).json({
-        message: "Invalid email or password",
-      });
-    }
-
-    // Create JWT
     const token = jwt.sign(
       {
         userId: user._id,
@@ -96,11 +144,8 @@ const loginUser = async (req, res) => {
       }
     );
 
-    // Store token in HTTP-only cookie
     res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      ...cookieOptions(),
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
@@ -114,16 +159,111 @@ const loginUser = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Login error:", error);
+    next(error);
+  }
+};
+ 
+const googleLogin = async (req, res, next) => {
+  try {
+    const { credential } = req.body;
 
-    res.status(500).json({
-      message: "Something went wrong",
+    if (!credential || typeof credential !== "string") {
+      return res.status(400).json({
+        message: "Google credential is required",
+      });
+    }
+
+    if (!process.env.GOOGLE_CLIENT_ID) {
+      return res.status(500).json({
+        message: "Google authentication is not configured",
+      });
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken: credential,
+      audience: process.env.GOOGLE_CLIENT_ID,
     });
+
+    const payload = ticket.getPayload();
+
+    if (!payload) {
+      return res.status(401).json({
+        message: "Invalid Google credential",
+      });
+    }
+
+    const {
+      sub: googleId,
+      email,
+      email_verified: emailVerified,
+      name,
+    } = payload;
+
+    if (!googleId || !email || !emailVerified) {
+      return res.status(401).json({
+        message: "Google account could not be verified",
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    let user = await User.findOne({ googleId });
+
+    if (!user) {
+      user = await User.findOne({ email: cleanEmail });
+
+      if (user) {
+        if (user.googleId && user.googleId !== googleId) {
+          return res.status(409).json({
+            message: "This email is already linked to another Google account",
+          });
+        }
+
+        user.googleId = googleId;
+        await user.save();
+      }
+    }
+
+    if (!user) {
+      user = await User.create({
+        name: name?.trim() || cleanEmail.split("@")[0],
+        email: cleanEmail,
+        googleId,
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user._id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
+
+    res.cookie("token", token, {
+      ...cookieOptions(),
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.status(200).json({
+      message: "Google login successful",
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    next(error);
   }
 };
 
-//endpoint that tells the frontend who is logged in
-const getCurrentUser = async (req, res) => {
+// Tells the frontend who is logged in
+const getCurrentUser = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.userId).select("-password");
 
@@ -137,30 +277,22 @@ const getCurrentUser = async (req, res) => {
       user,
     });
   } catch (error) {
-    console.error("Get current user error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
 const logoutUser = (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-  });
+  res.clearCookie("token", cookieOptions());
 
   res.status(200).json({
     message: "Logout successful",
   });
 };
 
-
 module.exports = {
   registerUser,
   loginUser,
+  googleLogin,
   getCurrentUser,
   logoutUser,
 };

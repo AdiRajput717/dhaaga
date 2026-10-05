@@ -3,17 +3,25 @@
 import { useEffect, useRef, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { NAV_LINKS } from '@/lib/data'
 import { gsap } from '@/lib/gsapUtils'
+import { useAuth } from '@/context/AuthContext'
 
 export default function Navbar() {
+  const { user, cartCount, wishlistIds, logout } = useAuth()
+  const router = useRouter()
+
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [bagCount, setBagCount] = useState(0)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+
   const navRef = useRef<HTMLElement>(null)
   const mobileMenuRef = useRef<HTMLDivElement>(null)
   const mobileLinksRef = useRef<HTMLDivElement>(null)
+  const accountMenuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 30)
@@ -21,14 +29,18 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handleScroll)
   }, [])
 
-  // Listen for bag updates
+  // Close account menu on click outside
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent<number>).detail
-      setBagCount(detail)
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        accountMenuRef.current &&
+        !accountMenuRef.current.contains(e.target as Node)
+      ) {
+        setAccountMenuOpen(false)
+      }
     }
-    window.addEventListener('dhaaga:bagupdate', handler)
-    return () => window.removeEventListener('dhaaga:bagupdate', handler)
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   // Listen for search open request
@@ -68,6 +80,20 @@ export default function Navbar() {
 
   const closeMenu = () => setMenuOpen(false)
 
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (searchQuery.trim()) {
+      setSearchOpen(false)
+      router.push(`/shop?q=${encodeURIComponent(searchQuery.trim())}`)
+    }
+  }
+
+  const handleLogout = async () => {
+    setAccountMenuOpen(false)
+    await logout()
+    router.push('/')
+  }
+
   return (
     <>
       {/* Announcement bar */}
@@ -94,7 +120,7 @@ export default function Navbar() {
         </button>
 
         {/* Logo */}
-        <Link href="#top" className="nav-logo-wrap" aria-label="Dhaaga-e-Jashn home">
+        <Link href="/" className="nav-logo-wrap" aria-label="Dhaaga-e-Jashn home">
           <Image
             src="/images/logo.png"
             alt="Dhaaga-e-Jashn"
@@ -135,36 +161,213 @@ export default function Navbar() {
             aria-label="Search"
             onClick={() => setSearchOpen(true)}
           >
-            <svg viewBox="0 0 24 24">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6">
               <circle cx="11" cy="11" r="7" />
               <path d="M21 21l-5-5" />
             </svg>
           </button>
 
           {/* Wishlist */}
-          <button className="icon-btn hide-mobile" aria-label="Wishlist">
-            <svg viewBox="0 0 24 24">
+          <Link
+            href="/wishlist"
+            className="icon-btn hide-mobile"
+            aria-label={`Wishlist, ${wishlistIds.length} items`}
+            style={{ position: 'relative' }}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill={wishlistIds.length > 0 ? '#C99A3D' : 'none'}
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
               <path d="M12 20s-7-4.5-7-10a4 4 0 017-2.5A4 4 0 0119 10c0 5.5-7 10-7 10z" />
             </svg>
-          </button>
+            {wishlistIds.length > 0 && (
+              <span className="bag-count" style={{ background: '#C99A3D' }}>
+                {wishlistIds.length}
+              </span>
+            )}
+          </Link>
 
-          {/* Account */}
-          <button className="icon-btn hide-mobile" aria-label="Account">
-            <svg viewBox="0 0 24 24">
-              <circle cx="12" cy="8" r="4" />
-              <path d="M4 21c1-4 4-6 8-6s7 2 8 6" />
-            </svg>
-          </button>
+          {/* Account Dropdown */}
+          <div ref={accountMenuRef} style={{ position: 'relative' }}>
+            <button
+              className="icon-btn hide-mobile"
+              aria-label="Account"
+              onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+            >
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <circle cx="12" cy="8" r="4" />
+                <path d="M4 21c1-4 4-6 8-6s7 2 8 6" />
+              </svg>
+            </button>
+
+            {accountMenuOpen && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 12px)',
+                  right: 0,
+                  width: 220,
+                  background: '#F8F5EF',
+                  border: '1px solid rgba(6,34,60,0.12)',
+                  boxShadow: '0 12px 32px rgba(6,34,60,0.12)',
+                  padding: '12px 0',
+                  zIndex: 200,
+                  animation: 'fadeIn 0.2s ease-out',
+                }}
+              >
+                {user ? (
+                  <>
+                    <div
+                      style={{
+                        padding: '8px 16px 12px',
+                        borderBottom: '1px solid rgba(6,34,60,0.08)',
+                        marginBottom: 6,
+                      }}
+                    >
+                      <p style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#C99A3D', fontWeight: 600 }}>
+                        {user.role === 'admin' ? 'Administrator' : 'Signed in as'}
+                      </p>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#06223C', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {user.name}
+                      </p>
+                    </div>
+
+                    {user.role === 'admin' && (
+                      <Link
+                        href="/admin"
+                        onClick={() => setAccountMenuOpen(false)}
+                        style={{
+                          display: 'block',
+                          padding: '8px 16px',
+                          fontSize: 13,
+                          color: '#C99A3D',
+                          fontWeight: 600,
+                        }}
+                      >
+                        Admin Dashboard
+                      </Link>
+                    )}
+
+                    <Link
+                      href="/account"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        color: '#06223C',
+                      }}
+                    >
+                      My Account
+                    </Link>
+
+                    <Link
+                      href="/account/orders"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        color: '#06223C',
+                      }}
+                    >
+                      My Orders
+                    </Link>
+
+                    <Link
+                      href="/account/addresses"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        color: '#06223C',
+                      }}
+                    >
+                      Saved Addresses
+                    </Link>
+
+                    <Link
+                      href="/wishlist"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        color: '#06223C',
+                      }}
+                    >
+                      Wishlist ({wishlistIds.length})
+                    </Link>
+
+                    <div style={{ borderTop: '1px solid rgba(6,34,60,0.08)', marginTop: 6, paddingTop: 6 }}>
+                      <button
+                        type="button"
+                        onClick={handleLogout}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          padding: '8px 16px',
+                          fontSize: 13,
+                          color: '#A33',
+                          fontWeight: 500,
+                        }}
+                      >
+                        Sign Out
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ padding: '8px 16px 12px', borderBottom: '1px solid rgba(6,34,60,0.08)' }}>
+                      <p style={{ fontSize: 13, fontWeight: 500, color: '#06223C' }}>Welcome to Dhaaga</p>
+                    </div>
+
+                    <Link
+                      href="/login"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '10px 16px',
+                        fontSize: 13,
+                        color: '#06223C',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Sign In
+                    </Link>
+
+                    <Link
+                      href="/register"
+                      onClick={() => setAccountMenuOpen(false)}
+                      style={{
+                        display: 'block',
+                        padding: '8px 16px',
+                        fontSize: 13,
+                        color: '#496174',
+                      }}
+                    >
+                      Create Account
+                    </Link>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Bag */}
-          <button className="icon-btn" aria-label={`Shopping bag, ${bagCount} items`}>
-            <svg viewBox="0 0 24 24">
+          <Link href="/cart" className="icon-btn" aria-label={`Shopping bag, ${cartCount} items`}>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M5 8h14l-1 12H6zM9 8a3 3 0 016 0" />
             </svg>
-            {bagCount > 0 && (
-              <span className="bag-count">{bagCount}</span>
+            {cartCount > 0 && (
+              <span className="bag-count">{cartCount}</span>
             )}
-          </button>
+          </Link>
 
           <Link href="/shop" className="nav-cta">
             SHOP NOW
@@ -190,7 +393,7 @@ export default function Navbar() {
         </button>
 
         {/* Gold ornament */}
-        <div style={{ marginBottom: 40, opacity: 0.5 }}>
+        <div style={{ marginBottom: 32, opacity: 0.5 }}>
           <Image
             src="/images/brandmark.png"
             alt=""
@@ -212,7 +415,58 @@ export default function Navbar() {
               {link.label}
             </Link>
           ))}
-          <div style={{ marginTop: 32 }}>
+
+          <Link
+            href="/cart"
+            className="mobile-menu-link"
+            onClick={closeMenu}
+            style={{ display: 'block' }}
+          >
+            Shopping Bag ({cartCount})
+          </Link>
+
+          <Link
+            href="/wishlist"
+            className="mobile-menu-link"
+            onClick={closeMenu}
+            style={{ display: 'block' }}
+          >
+            Wishlist ({wishlistIds.length})
+          </Link>
+
+          {user ? (
+            <>
+              <Link
+                href="/account"
+                className="mobile-menu-link"
+                onClick={closeMenu}
+                style={{ display: 'block', color: '#C99A3D' }}
+              >
+                Account ({user.name})
+              </Link>
+              {user.role === 'admin' && (
+                <Link
+                  href="/admin"
+                  className="mobile-menu-link"
+                  onClick={closeMenu}
+                  style={{ display: 'block', color: '#C99A3D' }}
+                >
+                  Admin Portal
+                </Link>
+              )}
+            </>
+          ) : (
+            <Link
+              href="/login"
+              className="mobile-menu-link"
+              onClick={closeMenu}
+              style={{ display: 'block' }}
+            >
+              Sign In / Register
+            </Link>
+          )}
+
+          <div style={{ marginTop: 28 }}>
             <Link
               href="/shop"
               className="btn-primary"
@@ -225,7 +479,7 @@ export default function Navbar() {
         </nav>
 
         {/* Social row */}
-        <div style={{ position: 'absolute', bottom: 32, display: 'flex', gap: 20 }}>
+        <div style={{ position: 'absolute', bottom: 28, display: 'flex', gap: 20 }}>
           {['Instagram', 'Facebook', 'Pinterest'].map((s) => (
             <Link
               key={s}
@@ -243,7 +497,7 @@ export default function Navbar() {
         </div>
       </div>
 
-      {/* Search Overlay - rendered here, controlled by searchOpen state */}
+      {/* Search Overlay */}
       {searchOpen && (
         <div className="search-overlay open" role="dialog" aria-label="Search">
           <button
@@ -254,22 +508,31 @@ export default function Navbar() {
             ✕
           </button>
           <h2 className="search-title">What are you looking for?</h2>
-          <input
-            type="search"
-            className="search-input"
-            placeholder="Search kurtas, kurtis…"
-            aria-label="Search products"
-            autoFocus
-          />
+          <form onSubmit={handleSearchSubmit} style={{ width: '100%', maxWidth: 560 }}>
+            <input
+              type="search"
+              className="search-input"
+              placeholder="Search kurtas, kurtis, colors…"
+              aria-label="Search products"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+            />
+          </form>
           <div className="search-chips">
-            {['Kurtas', 'Kurtis', 'New Arrivals', 'Everyday Collection', 'Festive'].map((chip) => (
+            {[
+              { label: 'All Kurtas', href: '/category/kurtas' },
+              { label: 'Kurtis', href: '/category/kurtis' },
+              { label: 'Everyday Collection', href: '/category/everyday' },
+              { label: 'Festive Wear', href: '/category/festive' },
+            ].map((chip) => (
               <Link
-                key={chip}
-                href="#"
+                key={chip.label}
+                href={chip.href}
                 className="search-chip"
                 onClick={() => setSearchOpen(false)}
               >
-                {chip}
+                {chip.label}
               </Link>
             ))}
           </div>

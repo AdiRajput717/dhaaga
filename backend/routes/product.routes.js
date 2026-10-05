@@ -10,6 +10,7 @@ const {
 
 const { protect } = require("../middleware/auth.middleware");
 const { admin } = require("../middleware/admin.middleware");
+const { validateObjectId } = require("../middleware/validate.middleware");
 
 const router = express.Router();
 
@@ -19,7 +20,7 @@ router.get("/:slug", getProductBySlug);
 
 // Admin only
 router.post("/", protect, admin, createProduct);
-router.put("/:id", protect, admin, updateProduct);
-router.delete("/:id", protect, admin, deleteProduct);
+router.put("/:id", protect, admin, validateObjectId("id"), updateProduct);
+router.delete("/:id", protect, admin, validateObjectId("id"), deleteProduct);
 
 module.exports = router;

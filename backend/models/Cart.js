@@ -7,29 +7,11 @@ const cartItemSchema = new mongoose.Schema(
       ref: "Product",
       required: true,
     },
-
-    size: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    color: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1,
-      default: 1,
-    },
+    size: { type: String, required: true, trim: true },
+    color: { type: String, required: true, trim: true },
+    quantity: { type: Number, required: true, min: 1, default: 1 },
   },
-  {
-    _id: true,
-  }
+  { _id: true }
 );
 
 const cartSchema = new mongoose.Schema(
@@ -40,14 +22,9 @@ const cartSchema = new mongoose.Schema(
       required: true,
       unique: true,
     },
-
     items: [cartItemSchema],
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const Cart = mongoose.model("Cart", cartSchema);
-
-module.exports = Cart;
+module.exports = mongoose.model("Cart", cartSchema);

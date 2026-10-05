@@ -5,16 +5,17 @@ import {
   useRef,
   useState,
 } from 'react'
-
+import Link from 'next/link'
+import Image from 'next/image'
 import { gsap, ScrollTrigger } from '@/lib/gsapUtils'
 import {
   PRODUCTS,
   SIZES,
   formatPrice,
-  type Product,
 } from '@/lib/data'
-
-import ProductCard from '@/components/ProductCard'
+import ProductCard, { AnyProduct, KurtaSilhouette } from '@/components/ProductCard'
+import { useAuth } from '@/context/AuthContext'
+import { addToCart } from '@/lib/cart'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -23,7 +24,7 @@ gsap.registerPlugin(ScrollTrigger)
    ========================================================= */
 
 interface QuickViewModalProps {
-  product: Product | null
+  product: AnyProduct | null
   onClose: () => void
 }
 
@@ -31,15 +32,22 @@ export function QuickViewModal({
   product,
   onClose,
 }: QuickViewModalProps) {
-  const [selectedSize, setSelectedSize] =
-    useState<string>('M')
-
-  const overlayRef =
-    useRef<HTMLDivElement>(null)
+  const { user, refreshCart } = useAuth()
+  const [selectedSize, setSelectedSize] = useState<string>('M')
+  const [selectedColor, setSelectedColor] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (product) {
       document.body.style.overflow = 'hidden'
+      if (product.variants && product.variants.length > 0) {
+        setSelectedSize(product.variants[0].size)
+        setSelectedColor(product.variants[0].color)
+      } else {
+        setSelectedSize('M')
+        setSelectedColor(product.colorName || 'Ivory')
+      }
     } else {
       document.body.style.overflow = ''
     }
@@ -56,16 +64,9 @@ export function QuickViewModal({
       }
     }
 
-    document.addEventListener(
-      'keydown',
-      handleKeyDown
-    )
-
+    document.addEventListener('keydown', handleKeyDown)
     return () => {
-      document.removeEventListener(
-        'keydown',
-        handleKeyDown
-      )
+      document.removeEventListener('keydown', handleKeyDown)
     }
   }, [onClose])
 
@@ -73,19 +74,61 @@ export function QuickViewModal({
     return null
   }
 
-  const handleAddToBag = () => {
-    window.dispatchEvent(
-      new CustomEvent('dhaaga:addtobag')
-    )
+  const sizes = product.variants
+    ? Array.from(new Set(product.variants.map((v) => v.size)))
+    : Array.from(SIZES)
 
-    window.dispatchEvent(
-      new CustomEvent('dhaaga:toast', {
-        detail: 'Added to your bag ✓',
-      })
-    )
+  const handleAddToBag = async () => {
+    if (product._id) {
+      if (!user) {
+        window.dispatchEvent(
+          new CustomEvent('dhaaga:toast', {
+            detail: 'Please sign in to add items to your bag',
+          })
+        )
+        return
+      }
 
-    onClose()
+      try {
+        setLoading(true)
+        const variant = product.variants?.find(
+          (v) => v.size === selectedSize && (!selectedColor || v.color.toLowerCase() === selectedColor.toLowerCase())
+        ) || product.variants?.[0]
+
+        await addToCart({
+          productId: product._id,
+          size: variant ? variant.size : selectedSize,
+          color: variant ? variant.color : (selectedColor || 'Ivory'),
+          quantity: 1,
+        })
+        await refreshCart()
+        window.dispatchEvent(
+          new CustomEvent('dhaaga:toast', {
+            detail: `Added ${product.name} (${selectedSize}) to your bag ✓`,
+          })
+        )
+        onClose()
+      } catch (err: any) {
+        window.dispatchEvent(
+          new CustomEvent('dhaaga:toast', {
+            detail: err?.message || 'Could not add to bag',
+          })
+        )
+      } finally {
+        setLoading(false)
+      }
+    } else {
+      window.dispatchEvent(new CustomEvent('dhaaga:addtobag'))
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: 'Added to your bag ✓',
+        })
+      )
+      onClose()
+    }
   }
+
+  const bgHex = product.color || '#EFE8DA'
 
   return (
     <div
@@ -95,9 +138,7 @@ export function QuickViewModal({
       aria-modal="true"
       aria-label="Quick view"
       onClick={(event) => {
-        if (
-          event.target === overlayRef.current
-        ) {
+        if (event.target === overlayRef.current) {
           onClose()
         }
       }}
@@ -116,56 +157,32 @@ export function QuickViewModal({
         <div
           className="modal-img-wrap"
           style={{
-            background: product.color,
+            background: bgHex,
             display: 'flex',
             alignItems: 'flex-end',
             justifyContent: 'center',
+            position: 'relative',
           }}
         >
-          <svg
-            viewBox="0 0 100 130"
-            aria-hidden="true"
-            style={{
-              width: '65%',
-              height: '85%',
-            }}
-          >
-            <path
-              d="M36 6l14 8 14-8 12 10 10 40-10 4-2-18v90H26V42l-2 18-10-4 10-40z"
-              fill="rgba(6,34,60,0.15)"
+          {product.images && product.images.length > 0 && product.images[0].startsWith('http') ? (
+            <Image
+              src={product.images[0]}
+              alt={product.name}
+              fill
+              style={{ objectFit: 'cover' }}
             />
-
-            <path
-              d="M44 14 Q50 20 56 14"
-              fill="none"
-              stroke="rgba(6,34,60,0.15)"
-              strokeWidth="1"
-            />
-
-            <line
-              x1="50"
-              y1="20"
-              x2="50"
-              y2="50"
-              stroke="rgba(6,34,60,0.15)"
-              strokeWidth="0.8"
-            />
-          </svg>
+          ) : (
+            <KurtaSilhouette color={bgHex} />
+          )}
         </div>
 
         {/* Product info */}
         <div className="modal-info">
-          <h3 className="modal-title">
-            {product.name}
-          </h3>
+          <h3 className="modal-title">{product.name}</h3>
 
-          <p className="modal-price">
-            {formatPrice(product.price)}
-          </p>
+          <p className="modal-price">{formatPrice(product.price)}</p>
 
-          <p className="modal-desc">
-            {product.description}
-          </p>
+          <p className="modal-desc">{product.description}</p>
 
           <p className="modal-label">
             COLOR:{' '}
@@ -175,7 +192,7 @@ export function QuickViewModal({
                 fontWeight: 700,
               }}
             >
-              {product.colorName}
+              {product.colorName || selectedColor || 'Classic'}
             </span>
           </p>
 
@@ -190,22 +207,16 @@ export function QuickViewModal({
             </p>
 
             <div className="modal-sizes">
-              {SIZES.map((size) => (
+              {sizes.map((size) => (
                 <button
                   type="button"
                   key={size}
                   className={`modal-size-btn ${
-                    selectedSize === size
-                      ? 'active'
-                      : ''
+                    selectedSize === size ? 'active' : ''
                   }`}
                   aria-label={`Size ${size}`}
-                  aria-pressed={
-                    selectedSize === size
-                  }
-                  onClick={() =>
-                    setSelectedSize(size)
-                  }
+                  aria-pressed={selectedSize === size}
+                  onClick={() => setSelectedSize(size)}
                 >
                   {size}
                 </button>
@@ -222,9 +233,29 @@ export function QuickViewModal({
               justifyContent: 'center',
             }}
             onClick={handleAddToBag}
+            disabled={loading}
           >
-            ADD TO BAG
+            {loading ? 'ADDING TO BAG...' : 'ADD TO BAG'}
           </button>
+
+          {product.slug && (
+            <div style={{ marginTop: 12, textAlign: 'center' }}>
+              <Link
+                href={`/product/${product.slug}`}
+                onClick={onClose}
+                style={{
+                  fontSize: 12,
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: '#C99A3D',
+                  fontWeight: 600,
+                  textDecoration: 'underline',
+                }}
+              >
+                View Full Details & Reviews →
+              </Link>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -236,21 +267,13 @@ export function QuickViewModal({
    ========================================================= */
 
 export function Toast() {
-  const [message, setMessage] =
-    useState('')
-
-  const [visible, setVisible] =
-    useState(false)
-
-  const timerRef =
-    useRef<ReturnType<typeof setTimeout> | null>(
-      null
-    )
+  const [message, setMessage] = useState('')
+  const [visible, setVisible] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     const handleToast = (event: Event) => {
-      const customEvent =
-        event as CustomEvent<string>
+      const customEvent = event as CustomEvent<string>
 
       setMessage(customEvent.detail)
       setVisible(true)
@@ -264,16 +287,10 @@ export function Toast() {
       }, 2400)
     }
 
-    window.addEventListener(
-      'dhaaga:toast',
-      handleToast
-    )
+    window.addEventListener('dhaaga:toast', handleToast)
 
     return () => {
-      window.removeEventListener(
-        'dhaaga:toast',
-        handleToast
-      )
+      window.removeEventListener('dhaaga:toast', handleToast)
 
       if (timerRef.current) {
         clearTimeout(timerRef.current)
@@ -283,9 +300,7 @@ export function Toast() {
 
   return (
     <div
-      className={`toast-msg ${
-        visible ? 'show' : ''
-      }`}
+      className={`toast-msg ${visible ? 'show' : ''}`}
       role="status"
       aria-live="polite"
     >
@@ -299,43 +314,19 @@ export function Toast() {
    ========================================================= */
 
 export function BagCountManager() {
-  const countRef = useRef(0)
+  const { cartCount, refreshCart } = useAuth()
 
   useEffect(() => {
     const handleAddToBag = () => {
-      countRef.current += 1
-
-      window.dispatchEvent(
-        new CustomEvent(
-          'dhaaga:bagupdate',
-          {
-            detail: countRef.current,
-          }
-        )
-      )
-
-      window.dispatchEvent(
-        new CustomEvent(
-          'dhaaga:toast',
-          {
-            detail: 'Added to your bag ✓',
-          }
-        )
-      )
+      refreshCart()
     }
 
-    window.addEventListener(
-      'dhaaga:addtobag',
-      handleAddToBag
-    )
+    window.addEventListener('dhaaga:addtobag', handleAddToBag)
 
     return () => {
-      window.removeEventListener(
-        'dhaaga:addtobag',
-        handleAddToBag
-      )
+      window.removeEventListener('dhaaga:addtobag', handleAddToBag)
     }
-  }, [])
+  }, [refreshCart])
 
   return null
 }
@@ -359,48 +350,29 @@ export default function ProductGrid({
   id,
   background,
 }: ProductGridProps) {
-  const [
-    quickViewProduct,
-    setQuickViewProduct,
-  ] = useState<Product | null>(null)
+  const [quickViewProduct, setQuickViewProduct] = useState<AnyProduct | null>(null)
 
-  const sectionRef =
-    useRef<HTMLElement>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+  const headRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
 
-  const headRef =
-    useRef<HTMLDivElement>(null)
-
-  const gridRef =
-    useRef<HTMLDivElement>(null)
-
-  const products = PRODUCTS.filter(
-    (product) =>
-      product.category === category
-  )
+  const products = PRODUCTS.filter((product) => product.category === category)
 
   useEffect(() => {
-    if (
-      !sectionRef.current ||
-      !headRef.current ||
-      !gridRef.current
-    ) {
+    if (!sectionRef.current || !headRef.current || !gridRef.current) {
       return
     }
 
-    const reducedMotion =
-      window.matchMedia(
-        '(prefers-reduced-motion: reduce)'
-      ).matches
+    const reducedMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)'
+    ).matches
 
     if (reducedMotion) {
       gridRef.current
         .querySelectorAll('.product-card')
         .forEach((card) => {
-          ;(
-            card as HTMLElement
-          ).style.opacity = '1'
+          ;(card as HTMLElement).style.opacity = '1'
         })
-
       return
     }
 
@@ -426,10 +398,7 @@ export default function ProductGrid({
       )
 
       /* Cards */
-      const cards =
-        gridRef.current?.querySelectorAll(
-          '.product-card'
-        )
+      const cards = gridRef.current?.querySelectorAll('.product-card')
 
       if (cards && cards.length > 0) {
         gsap.fromTo(
@@ -469,8 +438,7 @@ export default function ProductGrid({
         id={id}
         className="section-pad"
         style={{
-          background:
-            background ?? '#F8F5EF',
+          background: background ?? '#F8F5EF',
           maxWidth: '100%',
         }}
       >
@@ -488,42 +456,27 @@ export default function ProductGrid({
               <div className="eyebrow-line" />
 
               <span className="eyebrow-text">
-                {category === 'new'
-                  ? 'JUST ARRIVED'
-                  : 'MOST LOVED'}
+                {category === 'new' ? 'JUST ARRIVED' : 'MOST LOVED'}
               </span>
 
               <div className="eyebrow-line" />
             </div>
 
-            <h2 className="section-title">
-              {title}
-            </h2>
+            <h2 className="section-title">{title}</h2>
 
-            {subtitle && (
-              <p className="section-subtitle">
-                {subtitle}
-              </p>
-            )}
+            {subtitle && <p className="section-subtitle">{subtitle}</p>}
           </div>
 
           {/* Products */}
-          <div
-            ref={gridRef}
-            className="products-grid"
-          >
-            {products.map(
-              (product, index) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  index={index}
-                  onQuickView={
-                    setQuickViewProduct
-                  }
-                />
-              )
-            )}
+          <div ref={gridRef} className="products-grid">
+            {products.map((product, index) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                index={index}
+                onQuickView={setQuickViewProduct}
+              />
+            ))}
           </div>
         </div>
       </section>
@@ -531,9 +484,7 @@ export default function ProductGrid({
       {quickViewProduct && (
         <QuickViewModal
           product={quickViewProduct}
-          onClose={() =>
-            setQuickViewProduct(null)
-          }
+          onClose={() => setQuickViewProduct(null)}
         />
       )}
     </>

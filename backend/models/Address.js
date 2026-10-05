@@ -66,6 +66,12 @@ const addressSchema = new mongoose.Schema(
   }
 );
 
+// At most one default address per user (enforced by the database).
+addressSchema.index(
+  { user: 1 },
+  { unique: true, partialFilterExpression: { isDefault: true } }
+);
+
 const Address = mongoose.model("Address", addressSchema);
 
 module.exports = Address;

@@ -1,11 +1,37 @@
 'use client'
 
 import { useState } from 'react'
-import { formatPrice, type Product } from '@/lib/data'
+import Link from 'next/link'
+import Image from 'next/image'
+import { formatPrice } from '@/lib/data'
+import { useAuth } from '@/context/AuthContext'
+import { addToWishlist, removeFromWishlist } from '@/lib/wishlist'
+import { addToCart } from '@/lib/cart'
+
+export interface AnyProduct {
+  _id?: string
+  id?: string
+  name: string
+  slug?: string
+  description: string
+  price: number
+  color?: string
+  colorName?: string
+  category?: any
+  swatches?: string[]
+  images?: string[]
+  variants?: Array<{
+    _id?: string
+    size: string
+    color: string
+    stock: number
+  }>
+  isActive?: boolean
+}
 
 interface ProductCardProps {
-  product: Product
-  onQuickView: (product: Product) => void
+  product: AnyProduct
+  onQuickView?: (product: AnyProduct) => void
   index: number
   variant?: 'default' | 'featured'
 }
@@ -22,11 +48,28 @@ const COLOR_NAMES: Record<string, string> = {
   '#E8DFD1': 'Warm Ivory',
 }
 
-function KurtaSilhouette({ color }: { color: string }) {
+const COLOR_HEX_MAP: Record<string, string> = {
+  ivory: '#EFE8DA',
+  navy: '#06223C',
+  'sand beige': '#D8C6AA',
+  beige: '#D8C6AA',
+  'classic beige': '#D8C6AA',
+  charcoal: '#2b2b2b',
+  'deep charcoal': '#222',
+  'heritage navy': '#0d3558',
+  slate: '#496174',
+  'muted slate': '#496174',
+  'midnight blue': '#0a2c4d',
+  'midnight navy': '#06223C',
+}
+
+export function KurtaSilhouette({ color }: { color: string }) {
   const isLight =
     color === '#EFE8DA' ||
     color === '#D8C6AA' ||
-    color === '#E8DFD1'
+    color === '#E8DFD1' ||
+    color?.toLowerCase() === 'ivory' ||
+    color?.toLowerCase() === 'beige'
 
   const strokeColor = isLight
     ? 'rgba(6,34,60,0.15)'
@@ -45,14 +88,12 @@ function KurtaSilhouette({ color }: { color: string }) {
         d="M36 6l14 8 14-8 12 10 10 40-10 4-2-18v90H26V42l-2 18-10-4 10-40z"
         fill={strokeColor}
       />
-
       <path
         d="M44 14 Q50 20 56 14"
         fill="none"
         stroke={strokeColor}
         strokeWidth="1"
       />
-
       <line
         x1="50"
         y1="20"
@@ -71,67 +112,156 @@ export default function ProductCard({
   index,
   variant = 'default',
 }: ProductCardProps) {
-  const [wishlisted, setWishlisted] = useState(false)
+  const { user, wishlistIds, refreshWishlist, refreshCart } = useAuth()
+  const productId = product._id || product.id || ''
+  const isWishlisted = wishlistIds.includes(productId)
+  const [loadingAction, setLoadingAction] = useState(false)
 
-  const handleWishlist = (
-    e: React.MouseEvent<HTMLButtonElement>
-  ) => {
+  // Color resolution
+  const firstVariantColor = product.variants?.[0]?.color
+  const mainColorName = product.colorName || firstVariantColor || 'Ivory'
+  const mainHex =
+    product.color ||
+    COLOR_HEX_MAP[mainColorName.toLowerCase()] ||
+    '#EFE8DA'
+
+  const swatches = product.swatches || (product.variants ? Array.from(new Set(product.variants.map((v) => COLOR_HEX_MAP[v.color.toLowerCase()] || '#EFE8DA'))) : [mainHex])
+
+  const productUrl = product.slug ? `/product/${product.slug}` : `/shop`
+
+  const handleWishlist = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
     e.stopPropagation()
 
-    const nextValue = !wishlisted
-    setWishlisted(nextValue)
+    if (!user) {
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: 'Please sign in to save items to your wishlist',
+        })
+      )
+      return
+    }
 
-    window.dispatchEvent(
-      new CustomEvent('dhaaga:toast', {
-        detail: nextValue
-          ? 'Added to wishlist ♥'
-          : 'Removed from wishlist',
-      })
-    )
+    if (!productId) return
+
+    try {
+      if (isWishlisted) {
+        await removeFromWishlist(productId)
+        window.dispatchEvent(
+          new CustomEvent('dhaaga:toast', {
+            detail: 'Removed from wishlist',
+          })
+        )
+      } else {
+        await addToWishlist(productId)
+        window.dispatchEvent(
+          new CustomEvent('dhaaga:toast', {
+            detail: 'Added to wishlist ♥',
+          })
+        )
+      }
+      await refreshWishlist()
+    } catch (err: any) {
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: err?.message || 'Could not update wishlist',
+        })
+      )
+    }
   }
 
-  const handleAddToBag = (
-    e: React.MouseEvent<HTMLButtonElement>
-  ) => {
+  const handleAddToBag = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.preventDefault()
     e.stopPropagation()
 
-    window.dispatchEvent(
-      new CustomEvent('dhaaga:addtobag')
-    )
+    if (!user) {
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: 'Please sign in to add items to your bag',
+        })
+      )
+      return
+    }
+
+    if (!product._id || !product.variants || product.variants.length === 0) {
+      if (onQuickView) {
+        onQuickView(product)
+      }
+      return
+    }
+
+    const availableVariant = product.variants.find((v) => v.stock > 0) || product.variants[0]
+
+    try {
+      setLoadingAction(true)
+      await addToCart({
+        productId: product._id,
+        size: availableVariant.size,
+        color: availableVariant.color,
+        quantity: 1,
+      })
+      await refreshCart()
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: `Added ${product.name} (${availableVariant.size}) to bag`,
+        })
+      )
+    } catch (err: any) {
+      window.dispatchEvent(
+        new CustomEvent('dhaaga:toast', {
+          detail: err?.message || 'Could not add to bag',
+        })
+      )
+    } finally {
+      setLoadingAction(false)
+    }
+  }
+
+  const handleImageClick = (e: React.MouseEvent) => {
+    if (onQuickView) {
+      onQuickView(product)
+    }
   }
 
   return (
-    <article
-      className="product-card"
-      aria-label={product.name}
-    >
+    <article className="product-card" aria-label={product.name}>
       {/* Product image */}
       <div
         className="product-card-img"
         tabIndex={0}
         role="button"
         aria-label={`Quick view ${product.name}`}
-        onClick={() => onQuickView(product)}
+        onClick={handleImageClick}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault()
-            onQuickView(product)
+            if (onQuickView) onQuickView(product)
           }
         }}
         style={{
-          background: product.color,
+          background: mainHex,
         }}
       >
         <div
           className="product-card-img-inner"
           style={{
-            background: product.color,
+            background: mainHex,
             display: 'flex',
             alignItems: 'flex-end',
             justifyContent: 'center',
           }}
         >
-          <KurtaSilhouette color={product.color} />
+          {product.images && product.images.length > 0 && product.images[0].startsWith('http') ? (
+            <Image
+              src={product.images[0]}
+              alt={product.name}
+              fill
+              sizes="(max-width: 768px) 50vw, 33vw"
+              style={{ objectFit: 'cover' }}
+            />
+          ) : (
+            <KurtaSilhouette color={mainHex} />
+          )}
         </div>
 
         <div className="product-card-overlay" />
@@ -139,20 +269,16 @@ export default function ProductCard({
         {/* Wishlist */}
         <button
           type="button"
-          className={`product-card-wish ${
-            wishlisted ? 'active' : ''
-          }`}
-          aria-label={`${
-            wishlisted ? 'Remove' : 'Add'
-          } ${product.name} from wishlist`}
+          className={`product-card-wish ${isWishlisted ? 'active' : ''}`}
+          aria-label={`${isWishlisted ? 'Remove' : 'Add'} ${product.name} from wishlist`}
           onClick={handleWishlist}
         >
           <svg
             viewBox="0 0 24 24"
             width="16"
             height="16"
-            fill={wishlisted ? '#C99A3D' : 'none'}
-            stroke={wishlisted ? '#C99A3D' : '#06223C'}
+            fill={isWishlisted ? '#C99A3D' : 'none'}
+            stroke={isWishlisted ? '#C99A3D' : '#06223C'}
             strokeWidth="1.5"
           >
             <path d="M12 20s-7-4.5-7-10a4 4 0 017-2.5A4 4 0 0119 10c0 5.5-7 10-7 10z" />
@@ -165,8 +291,9 @@ export default function ProductCard({
           className="product-card-add"
           aria-label={`Add ${product.name} to bag`}
           onClick={handleAddToBag}
+          disabled={loadingAction}
         >
-          ADD TO BAG
+          {loadingAction ? 'ADDING...' : 'ADD TO BAG'}
         </button>
 
         <div className="product-card-gold-line" />
@@ -196,26 +323,22 @@ export default function ProductCard({
       {/* Product information */}
       <div
         className={
-          variant === 'featured'
-            ? 'featured-card-info'
-            : 'product-card-info'
+          variant === 'featured' ? 'featured-card-info' : 'product-card-info'
         }
       >
         <h3
           className={
-            variant === 'featured'
-              ? 'featured-card-name'
-              : 'product-card-name'
+            variant === 'featured' ? 'featured-card-name' : 'product-card-name'
           }
         >
-          {product.name}
+          <Link href={productUrl} style={{ color: 'inherit' }}>
+            {product.name}
+          </Link>
         </h3>
 
         <p
           className={
-            variant === 'featured'
-              ? 'featured-card-desc'
-              : 'product-card-desc'
+            variant === 'featured' ? 'featured-card-desc' : 'product-card-desc'
           }
         >
           {product.description}
@@ -223,28 +346,22 @@ export default function ProductCard({
 
         <p
           className={
-            variant === 'featured'
-              ? 'featured-card-price'
-              : 'product-card-price'
+            variant === 'featured' ? 'featured-card-price' : 'product-card-price'
           }
         >
           {formatPrice(product.price)}
         </p>
 
         <div className="product-swatches">
-          {product.swatches.map((swatch, index) => (
+          {swatches.map((swatch, idx) => (
             <div
-              key={`${swatch}-${index}`}
+              key={`${swatch}-${idx}`}
               className="swatch"
               style={{
                 background: swatch,
               }}
-              title={
-                COLOR_NAMES[swatch] ?? 'As shown'
-              }
-              aria-label={
-                COLOR_NAMES[swatch] ?? 'Color swatch'
-              }
+              title={COLOR_NAMES[swatch] ?? 'As shown'}
+              aria-label={COLOR_NAMES[swatch] ?? 'Color swatch'}
             />
           ))}
         </div>

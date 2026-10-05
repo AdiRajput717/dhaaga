@@ -1,6 +1,79 @@
 const Address = require("../models/Address");
 
-const getAddresses = async (req, res) => {
+const PHONE_REGEX = /^[6-9]\d{9}$/; // 10-digit Indian mobile number
+const PINCODE_REGEX = /^[1-9]\d{5}$/; // 6-digit Indian PIN code
+
+const STRING_FIELDS = [
+  "fullName",
+  "phone",
+  "addressLine1",
+  "addressLine2",
+  "city",
+  "state",
+  "pincode",
+  "country",
+];
+
+// Trims string fields and validates phone/pincode. Returns { data } or { error }.
+const cleanAddressBody = (body, { partial }) => {
+  const data = {};
+
+  for (const field of STRING_FIELDS) {
+    if (body[field] === undefined) continue;
+
+    if (typeof body[field] !== "string") {
+      return { error: `${field} must be a string` };
+    }
+
+    data[field] = body[field].trim();
+  }
+
+  if (data.phone !== undefined) {
+    // allow "+91 98765 43210" style input
+    data.phone = data.phone.replace(/^\+?91/, "").replace(/[\s-]/g, "");
+
+    if (!PHONE_REGEX.test(data.phone)) {
+      return { error: "Please provide a valid 10-digit phone number" };
+    }
+  }
+
+  if (data.pincode !== undefined && !PINCODE_REGEX.test(data.pincode)) {
+    return { error: "Please provide a valid 6-digit pincode" };
+  }
+
+  if (body.isDefault !== undefined) {
+    if (typeof body.isDefault !== "boolean") {
+      return { error: "isDefault must be true or false" };
+    }
+
+    data.isDefault = body.isDefault;
+  }
+
+  if (!partial) {
+    const required = [
+      "fullName",
+      "phone",
+      "addressLine1",
+      "city",
+      "state",
+      "pincode",
+    ];
+
+    if (required.some((field) => !data[field])) {
+      return { error: "Required address fields are missing" };
+    }
+  } else {
+    const requiredWhenSent = ["fullName", "addressLine1", "city", "state"];
+
+    if (requiredWhenSent.some((field) => data[field] === "")) {
+      return { error: "Required address fields cannot be empty" };
+    }
+  }
+
+  return { data };
+};
+
+const getAddresses = async (req, res, next) => {
   try {
     const addresses = await Address.find({
       user: req.user.userId,
@@ -13,41 +86,24 @@ const getAddresses = async (req, res) => {
       addresses,
     });
   } catch (error) {
-    console.error("Get addresses error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-
-const createAddress = async (req, res) => {
+const createAddress = async (req, res, next) => {
   try {
-    const {
-      fullName,
-      phone,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      pincode,
-      country,
-      isDefault,
-    } = req.body;
+    const { data, error } = cleanAddressBody(req.body, { partial: false });
 
-    if (
-      !fullName ||
-      !phone ||
-      !addressLine1 ||
-      !city ||
-      !state ||
-      !pincode
-    ) {
-      return res.status(400).json({
-        message: "Required address fields are missing",
-      });
+    if (error) {
+      return res.status(400).json({ message: error });
     }
+
+    const existingCount = await Address.countDocuments({
+      user: req.user.userId,
+    });
+
+    // The first address is always the default.
+    const isDefault = existingCount === 0 ? true : data.isDefault === true;
 
     if (isDefault) {
       await Address.updateMany(
@@ -57,16 +113,10 @@ const createAddress = async (req, res) => {
     }
 
     const address = await Address.create({
+      ...data,
       user: req.user.userId,
-      fullName,
-      phone,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      pincode,
-      country: country || "India",
-      isDefault: isDefault || false,
+      country: data.country || "India",
+      isDefault,
     });
 
     res.status(201).json({
@@ -74,16 +124,11 @@ const createAddress = async (req, res) => {
       address,
     });
   } catch (error) {
-    console.error("Create address error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-
-const updateAddress = async (req, res) => {
+const updateAddress = async (req, res, next) => {
   try {
     const address = await Address.findOne({
       _id: req.params.id,
@@ -96,19 +141,13 @@ const updateAddress = async (req, res) => {
       });
     }
 
-    const {
-      fullName,
-      phone,
-      addressLine1,
-      addressLine2,
-      city,
-      state,
-      pincode,
-      country,
-      isDefault,
-    } = req.body;
+    const { data, error } = cleanAddressBody(req.body, { partial: true });
 
-    if (isDefault) {
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    if (data.isDefault === true) {
       await Address.updateMany(
         {
           user: req.user.userId,
@@ -118,18 +157,13 @@ const updateAddress = async (req, res) => {
       );
     }
 
-    address.fullName = fullName ?? address.fullName;
-    address.phone = phone ?? address.phone;
-    address.addressLine1 = addressLine1 ?? address.addressLine1;
-    address.addressLine2 = addressLine2 ?? address.addressLine2;
-    address.city = city ?? address.city;
-    address.state = state ?? address.state;
-    address.pincode = pincode ?? address.pincode;
-    address.country = country ?? address.country;
-
-    if (isDefault !== undefined) {
-      address.isDefault = isDefault;
+    // The only way to move the default is to mark another address as default,
+    // so a user is never left without one.
+    if (data.isDefault === false && address.isDefault) {
+      delete data.isDefault;
     }
+
+    Object.assign(address, data);
 
     await address.save();
 
@@ -138,16 +172,11 @@ const updateAddress = async (req, res) => {
       address,
     });
   } catch (error) {
-    console.error("Update address error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
 
-
-const deleteAddress = async (req, res) => {
+const deleteAddress = async (req, res, next) => {
   try {
     const address = await Address.findOneAndDelete({
       _id: req.params.id,
@@ -160,18 +189,25 @@ const deleteAddress = async (req, res) => {
       });
     }
 
+    // If the default was deleted, promote the most recent remaining address.
+    if (address.isDefault) {
+      const replacement = await Address.findOne({
+        user: req.user.userId,
+      }).sort({ createdAt: -1 });
+
+      if (replacement) {
+        replacement.isDefault = true;
+        await replacement.save();
+      }
+    }
+
     res.status(200).json({
       message: "Address deleted successfully",
     });
   } catch (error) {
-    console.error("Delete address error:", error);
-
-    res.status(500).json({
-      message: "Something went wrong",
-    });
+    next(error);
   }
 };
-
 
 module.exports = {
   getAddresses,

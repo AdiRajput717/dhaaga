@@ -9,12 +9,14 @@ const {
 } = require("../controllers/review.controller");
 
 const { protect } = require("../middleware/auth.middleware");
+const { validateObjectId } = require("../middleware/validate.middleware");
 
 const router = express.Router();
 
 // Public
 router.get(
   "/product/:productId",
+  validateObjectId("productId"),
   getProductReviews
 );
 
@@ -30,12 +32,14 @@ router.get(
 router.put(
   "/:id",
   protect,
+  validateObjectId("id"),
   updateReview
 );
 
 router.delete(
   "/:id",
   protect,
+  validateObjectId("id"),
   deleteReview
 );
 

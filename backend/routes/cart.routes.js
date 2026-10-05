@@ -9,6 +9,7 @@ const {
 } = require("../controllers/cart.controller");
 
 const { protect } = require("../middleware/auth.middleware");
+const { validateObjectId } = require("../middleware/validate.middleware");
 
 const router = express.Router();
 
@@ -18,9 +19,9 @@ router.get("/", protect, getCart);
 
 router.post("/items", protect, addToCart);
 
-router.put("/items/:itemId", protect, updateCartItem);
+router.put("/items/:itemId", protect, validateObjectId("itemId"), updateCartItem);
 
-router.delete("/items/:itemId", protect, removeCartItem);
+router.delete("/items/:itemId", protect, validateObjectId("itemId"), removeCartItem);
 
 router.delete("/", protect, clearCart);
 

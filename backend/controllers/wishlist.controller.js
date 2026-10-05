@@ -1,5 +1,6 @@
 const Wishlist = require("../models/Wishlist");
 const Product = require("../models/Product");
+const { isValidObjectId } = require("../utils/helpers");
 
 const getWishlist = async (req, res) => {
   try {
@@ -31,9 +32,9 @@ const addToWishlist = async (req, res) => {
   try {
     const { productId } = req.body;
 
-    if (!productId) {
+    if (!productId || !isValidObjectId(productId)) {
       return res.status(400).json({
-        message: "Product ID is required",
+        message: "A valid product ID is required",
       });
     }
 

@@ -8,6 +8,7 @@ const {
 } = require("../controllers/wishlist.controller");
 
 const { protect } = require("../middleware/auth.middleware");
+const { validateObjectId } = require("../middleware/validate.middleware");
 
 const router = express.Router();
 
@@ -15,7 +16,12 @@ router.get("/", protect, getWishlist);
 
 router.post("/items", protect, addToWishlist);
 
-router.delete("/items/:productId", protect, removeFromWishlist);
+router.delete(
+  "/items/:productId",
+  protect,
+  validateObjectId("productId"),
+  removeFromWishlist
+);
 
 router.delete("/", protect, clearWishlist);
 
