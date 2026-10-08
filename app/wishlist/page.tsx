@@ -68,7 +68,7 @@ export default function WishlistPage() {
 
       <main style={{ minHeight: '75vh', padding: '48px 24px 100px', maxWidth: 1240, margin: '0 auto' }}>
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 48 }}>
+        {/* <div style={{ textAlign: 'center', marginBottom: 48 }}>
           <div
             style={{
               display: 'inline-flex',
@@ -94,7 +94,7 @@ export default function WishlistPage() {
           >
             Your Wishlist
           </h1>
-        </div>
+        </div> */}
 
         {/* Guest View */}
         {!authLoading && !user && (

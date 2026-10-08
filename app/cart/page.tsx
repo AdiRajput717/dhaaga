@@ -119,16 +119,16 @@ export default function CartPage() {
 
       <main style={{ minHeight: '75vh', padding: '48px 24px 100px', maxWidth: 1180, margin: '0 auto' }}>
         {/* Header */}
-        <div style={{ textAlign: 'center', marginBottom: 48 }}>
-          <div
+        {/* <div style={{ textAlign: 'center', marginBottom: 48 }}> */}
+          {/* <div
             style={{
               display: 'inline-flex',
               alignItems: 'center',
               gap: 12,
               marginBottom: 12,
             }}
-          >
-            <div style={{ width: 32, height: 1, background: '#C99A3D', opacity: 0.7 }} />
+          // >
+            {/* <div style={{ width: 32, height: 1, background: '#C99A3D', opacity: 0.7 }} />
             <span style={{ fontSize: 11, letterSpacing: '0.25em', textTransform: 'uppercase', color: '#C99A3D', fontWeight: 600 }}>
               YOUR SELECTIONS
             </span>
@@ -145,7 +145,7 @@ export default function CartPage() {
           >
             Shopping Bag
           </h1>
-        </div>
+        </div> */}
 
         {/* Guest View */}
         {!authLoading && !user && (
