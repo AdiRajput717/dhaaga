@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { FOOTER_LINKS } from '@/lib/data'
+import { FOOTER_LINKS } from '@/lib/content'
 
 export default function Footer() {
   return (

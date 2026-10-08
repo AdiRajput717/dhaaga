@@ -2,12 +2,14 @@
 
 import { useEffect, useState, use } from 'react'
 import Link from 'next/link'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import ProductCard from '@/components/ProductCard'
-import { BagCountManager, QuickViewModal, Toast } from '@/components/ProductGrid'
-import { getCategoryBySlug, Category } from '@/lib/categories'
-import { getProducts, Product as APIProduct } from '@/lib/products'
+import Navbar from '@/components/layout/Navbar'
+import Footer from '@/components/layout/Footer'
+import ProductCard from '@/components/shop/ProductCard'
+import Toast from '@/components/ui/Toast'
+import BagCountManager from '@/components/ui/BagCountManager'
+import QuickViewModal from '@/components/shop/QuickViewModal'
+import { getCategoryBySlug, Category } from '@/lib/api/categories'
+import { getProducts, Product as APIProduct } from '@/lib/api/products'
 
 export default function CategoryPage({
   params,

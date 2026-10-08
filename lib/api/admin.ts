@@ -1,8 +1,13 @@
-import { apiFetch } from "./api";
+import { apiFetch } from "./client";
 import { Product, PaginationMeta } from "./products";
 import { Category } from "./categories";
 import { Order } from "./orders";
 import { Review } from "./reviews";
+import { User } from "./auth";
+
+export type AdminCategory = Category & { productCount: number };
+
+export type OrderStatus = Order["orderStatus"];
 
 export type DashboardStats = {
   totalUsers: number;
@@ -15,8 +20,35 @@ export type DashboardStats = {
   totalRevenue: number;
 };
 
-export async function getDashboardStats(): Promise<{ stats: DashboardStats }> {
-  return apiFetch<{ stats: DashboardStats }>("/admin/dashboard");
+export type SalesDay = { date: string; orders: number; revenue: number };
+
+export type TopProduct = {
+  productId: string;
+  name: string;
+  units: number;
+  revenue: number;
+};
+
+export type LowStockRow = {
+  productId: string;
+  name: string;
+  slug: string;
+  size: string;
+  color: string;
+  stock: number;
+};
+
+export type DashboardResponse = {
+  stats: DashboardStats;
+  ordersByStatus: Record<OrderStatus, number>;
+  salesByDay: SalesDay[];
+  topProducts: TopProduct[];
+  lowStock: LowStockRow[];
+  lowStockThreshold: number;
+};
+
+export async function getDashboardStats(): Promise<DashboardResponse> {
+  return apiFetch<DashboardResponse>("/admin/dashboard");
 }
 
 export async function getRecentOrders(): Promise<{ orders: Order[] }> {
@@ -38,6 +70,12 @@ export async function getAdminProducts(params?: {
   return apiFetch<{ products: Product[]; pagination: PaginationMeta }>(
     `/admin/products${qs ? `?${qs}` : ""}`
   );
+}
+
+export async function getAdminProductById(
+  id: string
+): Promise<{ product: Product }> {
+  return apiFetch<{ product: Product }>(`/admin/products/${id}`);
 }
 
 export async function createProduct(data: {
@@ -81,13 +119,15 @@ export async function deleteProduct(id: string): Promise<{ message: string }> {
   });
 }
 
-export async function getAdminCategories(): Promise<{ categories: Category[] }> {
-  return apiFetch<{ categories: Category[] }>("/admin/categories");
+export async function getAdminCategories(): Promise<{
+  categories: AdminCategory[];
+}> {
+  return apiFetch<{ categories: AdminCategory[] }>("/admin/categories");
 }
 
 export async function createCategory(data: {
   name: string;
-  slug: string;
+  slug?: string;
   description?: string;
   image?: string;
 }): Promise<{ message: string; category: Category }> {
@@ -116,8 +156,10 @@ export async function updateCategory(
   );
 }
 
-export async function deleteCategory(id: string): Promise<{ message: string }> {
-  return apiFetch<{ message: string }>(`/categories/admin/${id}`, {
+export async function deleteCategory(
+  id: string
+): Promise<{ message: string; affectedProducts: number }> {
+  return apiFetch<{ message: string; affectedProducts: number }>(`/categories/admin/${id}`, {
     method: "DELETE",
   });
 }
@@ -127,8 +169,10 @@ export async function getAdminOrders(params?: {
   limit?: number;
   status?: string;
   paymentStatus?: string;
+  q?: string;
 }): Promise<{ orders: Order[]; pagination: PaginationMeta }> {
   const sp = new URLSearchParams();
+  if (params?.q) sp.set("q", params.q);
   if (params?.page) sp.set("page", String(params.page));
   if (params?.limit) sp.set("limit", String(params.limit));
   if (params?.status) sp.set("status", params.status);
@@ -189,3 +233,36 @@ export async function deleteAdminReview(id: string): Promise<{ message: string }
     method: "DELETE",
   });
 }
+
+export async function getAdminUsers(params?: {
+  page?: number;
+  limit?: number;
+  q?: string;
+  role?: "customer" | "admin";
+}): Promise<{ users: AdminUser[]; pagination: PaginationMeta }> {
+  const sp = new URLSearchParams();
+  if (params?.page) sp.set("page", String(params.page));
+  if (params?.limit) sp.set("limit", String(params.limit));
+  if (params?.q) sp.set("q", params.q);
+  if (params?.role) sp.set("role", params.role);
+  const qs = sp.toString();
+  return apiFetch<{ users: AdminUser[]; pagination: PaginationMeta }>(
+    `/users${qs ? `?${qs}` : ""}`
+  );
+}
+
+export async function updateUserRole(
+  id: string,
+  role: "customer" | "admin"
+): Promise<{ message: string }> {
+  return apiFetch<{ message: string }>(`/users/${id}/role`, {
+    method: "PUT",
+    body: { role },
+  });
+}
+
+export type AdminUser = Omit<User, "id"> & {
+  _id: string;
+  authProvider?: string;
+  createdAt: string;
+};

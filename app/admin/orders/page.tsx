@@ -1,262 +1,189 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import AdminNav from '@/components/admin/AdminNav'
-import { BagCountManager, Toast } from '@/components/ProductGrid'
-import { getAdminOrders, updateOrderStatus } from '@/lib/admin'
-import { Order } from '@/lib/orders'
-import { useAuth } from '@/context/AuthContext'
-import { formatPrice } from '@/lib/data'
+import { Suspense, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { getAdminOrders, updateOrderStatus, type OrderStatus } from '@/lib/api/admin'
+import type { Order } from '@/lib/api/orders'
+import { useFetch } from '@/lib/hooks/useFetch'
+import { useDebounced } from '@/lib/hooks/useDebounced'
+import { formatDateTime, formatPrice } from '@/lib/format'
+import {
+  Badge,
+  EmptyState,
+  ErrorNote,
+  Modal,
+  notify,
+  PageHeader,
+  Pagination,
+  Spinner,
+  STATUS_TONE,
+} from '@/components/admin/ui'
 
-const STATUS_OPTIONS = [
-  'pending',
-  'confirmed',
-  'processing',
-  'shipped',
-  'delivered',
-  'cancelled',
-]
+const STATUSES: OrderStatus[] = ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled']
+const FLOW: OrderStatus[] = ['pending', 'confirmed', 'processing', 'shipped', 'delivered']
+// Mirrors the API rule: an order can be cancelled until it has shipped.
+const CANCELLABLE: OrderStatus[] = ['pending', 'confirmed', 'processing']
 
-export default function AdminOrdersPage() {
-  const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
+const nextStep = (status: OrderStatus): OrderStatus | null => {
+  const i = FLOW.indexOf(status)
+  return i >= 0 && i < FLOW.length - 1 ? FLOW[i + 1] : null
+}
 
-  const [orders, setOrders] = useState<Order[]>([])
-  const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState('')
-  const [paymentFilter, setPaymentFilter] = useState('')
-  const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
+const customerOf = (order: Order) =>
+  typeof order.user === 'string' ? { name: '—', email: '' } : order.user
 
-  const loadOrders = useCallback(async () => {
+function OrdersView() {
+  const params = useSearchParams()
+  const [search, setSearch] = useState(params.get('q') ?? '')
+  const [status, setStatus] = useState('')
+  const [payment, setPayment] = useState('')
+  const [page, setPage] = useState(1)
+  const [selected, setSelected] = useState<Order | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const q = useDebounced(search.trim())
+  const { data, error, loading, reload } = useFetch(
+    () => getAdminOrders({ page, limit: 15, q: q || undefined, status: status || undefined, paymentStatus: payment || undefined }),
+    [page, q, status, payment]
+  )
+
+  const changeStatus = async (order: Order, next: OrderStatus) => {
+    const verb = next === 'cancelled' ? 'Cancel' : `Mark as ${next}`
+    const extra = next === 'cancelled' ? ' Stock will be returned to inventory.' : ''
+    if (!window.confirm(`${verb} order ${order.orderNumber}?${extra}`)) return
+
+    setBusy(true)
     try {
-      setLoading(true)
-      const res = await getAdminOrders({
-        status: statusFilter || undefined,
-        paymentStatus: paymentFilter || undefined,
-      })
-      setOrders(res.orders || [])
-    } catch (err: any) {
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: err?.message || 'Failed to load orders' })
-      )
+      const res = await updateOrderStatus(order._id, next)
+      setSelected({ ...order, ...res.order, user: order.user })
+      notify(`Order ${order.orderNumber} is now ${next}`)
+      reload()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not update order')
     } finally {
-      setLoading(false)
-    }
-  }, [statusFilter, paymentFilter])
-
-  useEffect(() => {
-    if (!authLoading) {
-      if (!user || user.role !== 'admin') {
-        router.replace('/login?redirect=/admin/orders')
-        return
-      }
-      loadOrders()
-    }
-  }, [user, authLoading, router, loadOrders])
-
-  const handleStatusChange = async (orderId: string, newStatus: string) => {
-    try {
-      setUpdatingId(orderId)
-      await updateOrderStatus(orderId, newStatus)
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: `Status updated to ${newStatus}` })
-      )
-      loadOrders()
-    } catch (err: any) {
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: err?.message || 'Status transition invalid' })
-      )
-    } finally {
-      setUpdatingId(null)
+      setBusy(false)
     }
   }
 
   return (
     <>
-      <Navbar />
-      <BagCountManager />
-      <Toast />
+      <PageHeader title="Orders" subtitle="Review, fulfil and cancel customer orders." />
 
-      <main style={{ minHeight: '80vh', padding: '48px 24px 100px', maxWidth: 1180, margin: '0 auto' }}>
-        <div style={{ marginBottom: 28 }}>
-          <span style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#C99A3D', fontWeight: 600 }}>
-            FULFILLMENT &amp; SHIPMENTS
-          </span>
-          <h1 style={{ fontFamily: "var(--font-serif, 'Cormorant Garamond', serif)", fontSize: '2.8rem', color: '#06223C', fontWeight: 500, marginTop: 4 }}>
-            Order Management
-          </h1>
-        </div>
+      <div className="adm-toolbar">
+        <input
+          className="adm-input"
+          placeholder="Search order number…"
+          value={search}
+          onChange={(e) => { setSearch(e.target.value); setPage(1) }}
+          aria-label="Search orders"
+        />
+        <select className="adm-select" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }} aria-label="Order status">
+          <option value="">All statuses</option>
+          {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select className="adm-select" value={payment} onChange={(e) => { setPayment(e.target.value); setPage(1) }} aria-label="Payment status">
+          <option value="">Any payment</option>
+          {['pending', 'paid', 'failed', 'refunded'].map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
 
-        <AdminNav />
+      {error && <ErrorNote message={error} onRetry={reload} />}
+      {!data && !error && <Spinner />}
 
-        {/* Filters */}
-        <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: '10px 14px', border: '1px solid rgba(6,34,60,0.15)', background: '#FFF', fontSize: 13 }}
-          >
-            <option value="">All Order Statuses</option>
-            {STATUS_OPTIONS.map((st) => (
-              <option key={st} value={st}>
-                {st.toUpperCase()}
-              </option>
-            ))}
-          </select>
-
-          <select
-            value={paymentFilter}
-            onChange={(e) => setPaymentFilter(e.target.value)}
-            style={{ padding: '10px 14px', border: '1px solid rgba(6,34,60,0.15)', background: '#FFF', fontSize: 13 }}
-          >
-            <option value="">All Payment Statuses</option>
-            <option value="pending">Payment Pending</option>
-            <option value="paid">Paid</option>
-            <option value="failed">Failed</option>
-            <option value="refunded">Refunded</option>
-          </select>
-        </div>
-
-        {/* Orders Table */}
-        <div style={{ background: '#FFFFFF', border: '1px solid rgba(6,34,60,0.08)', padding: '24px 28px' }}>
-          {loading ? (
-            <div style={{ padding: '60px 0', textAlign: 'center' }}>
-              <p style={{ fontSize: 13, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#496174' }}>
-                Loading orders...
-              </p>
-            </div>
-          ) : orders.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, textAlign: 'left' }}>
+      {data && (
+        <>
+          <div className="adm-tablewrap" style={{ opacity: loading ? 0.6 : 1 }}>
+            {data.orders.length === 0 ? (
+              <EmptyState title="No orders found" hint="Try clearing the filters." />
+            ) : (
+              <table className="adm-table">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(6,34,60,0.1)', color: '#496174' }}>
-                    <th style={{ padding: '12px 14px' }}>Order #</th>
-                    <th style={{ padding: '12px 14px' }}>Customer</th>
-                    <th style={{ padding: '12px 14px' }}>Date</th>
-                    <th style={{ padding: '12px 14px' }}>Total</th>
-                    <th style={{ padding: '12px 14px' }}>Payment</th>
-                    <th style={{ padding: '12px 14px' }}>Order Status</th>
-                    <th style={{ padding: '12px 14px' }}>Details</th>
+                  <tr>
+                    <th>Order</th><th>Customer</th><th>Placed</th><th>Payment</th><th>Status</th><th className="num">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.map((ord) => {
-                    const isBusy = updatingId === ord._id
-                    return (
-                      <tr key={ord._id} style={{ borderBottom: '1px solid rgba(6,34,60,0.05)' }}>
-                        <td style={{ padding: '14px', fontWeight: 600, color: '#06223C' }}>
-                          {ord.orderNumber}
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <strong style={{ display: 'block', color: '#06223C' }}>
-                            {ord.shippingAddress?.fullName || 'Customer'}
-                          </strong>
-                          <span style={{ fontSize: 11, color: '#496174' }}>
-                            {typeof ord.user === 'object' ? ord.user?.email : ''}
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px', color: '#496174' }}>
-                          {new Date(ord.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </td>
-                        <td style={{ padding: '14px', fontWeight: 700 }}>
-                          {formatPrice(ord.totalAmount)}
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <span style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 600, color: ord.paymentStatus === 'paid' ? '#2E7D32' : '#C99A3D' }}>
-                            {ord.paymentMethod} ({ord.paymentStatus})
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <select
-                            disabled={isBusy}
-                            value={ord.orderStatus}
-                            onChange={(e) => handleStatusChange(ord._id, e.target.value)}
-                            style={{
-                              padding: '6px 10px',
-                              border: '1px solid rgba(6,34,60,0.2)',
-                              fontSize: 12,
-                              fontWeight: 600,
-                              textTransform: 'uppercase',
-                              background: '#FFF',
-                            }}
-                          >
-                            {STATUS_OPTIONS.map((st) => (
-                              <option key={st} value={st}>
-                                {st}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedOrder(ord)}
-                            style={{ color: '#06223C', fontWeight: 600, textDecoration: 'underline' }}
-                          >
-                            View Items
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {data.orders.map((order) => (
+                    <tr key={order._id} className="is-clickable" onClick={() => setSelected(order)}>
+                      <td><strong>{order.orderNumber}</strong><span className="adm-sub">{order.items.length} item{order.items.length > 1 ? 's' : ''}</span></td>
+                      <td>{customerOf(order).name}<span className="adm-sub">{customerOf(order).email}</span></td>
+                      <td>{formatDateTime(order.createdAt)}</td>
+                      <td><Badge tone={STATUS_TONE[order.paymentStatus]}>{order.paymentStatus}</Badge><span className="adm-sub">{order.paymentMethod.toUpperCase()}</span></td>
+                      <td><Badge tone={STATUS_TONE[order.orderStatus]}>{order.orderStatus}</Badge></td>
+                      <td className="num">{formatPrice(order.totalAmount)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-          ) : (
-            <p style={{ padding: '30px 0', textAlign: 'center', color: '#496174' }}>No orders found.</p>
-          )}
-        </div>
-      </main>
-
-      {/* Order Details Modal */}
-      {selectedOrder && (
-        <div className="modal-overlay open" role="dialog" aria-modal="true">
-          <div className="modal-box" style={{ maxWidth: 560, padding: 36 }}>
-            <button
-              type="button"
-              className="modal-close"
-              onClick={() => setSelectedOrder(null)}
-            >
-              ✕
-            </button>
-
-            <h3 style={{ fontFamily: "var(--font-serif, 'Cormorant Garamond', serif)", fontSize: '1.8rem', color: '#06223C', marginBottom: 6 }}>
-              Order #{selectedOrder.orderNumber}
-            </h3>
-            <p style={{ fontSize: 13, color: '#496174', marginBottom: 20 }}>
-              Destination: {selectedOrder.shippingAddress.fullName}, {selectedOrder.shippingAddress.city}, {selectedOrder.shippingAddress.state} ({selectedOrder.shippingAddress.phone})
-            </p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 300, overflowY: 'auto', marginBottom: 20 }}>
-              {selectedOrder.items.map((item) => (
-                <div key={item._id} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid rgba(6,34,60,0.06)' }}>
-                  <div>
-                    <strong style={{ fontSize: 14, color: '#06223C' }}>{item.productName}</strong>
-                    <p style={{ fontSize: 12, color: '#496174' }}>
-                      Size: {item.size} · Color: {item.color} · Qty: {item.quantity}
-                    </p>
-                  </div>
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>
-                    {formatPrice(item.price * item.quantity)}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700, color: '#06223C', paddingTop: 10, borderTop: '1px solid rgba(6,34,60,0.1)' }}>
-              <span>Total Amount</span>
-              <span>{formatPrice(selectedOrder.totalAmount)}</span>
-            </div>
+            )}
           </div>
-        </div>
+          <Pagination pagination={data.pagination} onPage={setPage} />
+        </>
       )}
 
-      <Footer />
+      {selected && (
+        <Modal
+          wide
+          title={`Order ${selected.orderNumber}`}
+          onClose={() => setSelected(null)}
+          footer={
+            <>
+              {CANCELLABLE.includes(selected.orderStatus) && (
+                <button className="adm-btn adm-btn--danger" disabled={busy} onClick={() => changeStatus(selected, 'cancelled')}>
+                  Cancel order
+                </button>
+              )}
+              {nextStep(selected.orderStatus) && (
+                <button className="adm-btn adm-btn--gold" disabled={busy} onClick={() => changeStatus(selected, nextStep(selected.orderStatus)!)}>
+                  Mark as {nextStep(selected.orderStatus)}
+                </button>
+              )}
+              {!nextStep(selected.orderStatus) && !CANCELLABLE.includes(selected.orderStatus) && (
+                <span className="adm-sub">This order is {selected.orderStatus}. No further actions.</span>
+              )}
+            </>
+          }
+        >
+          <dl className="adm-kv">
+            <dt>Status</dt><dd><Badge tone={STATUS_TONE[selected.orderStatus]}>{selected.orderStatus}</Badge></dd>
+            <dt>Payment</dt><dd><Badge tone={STATUS_TONE[selected.paymentStatus]}>{selected.paymentStatus}</Badge> via {selected.paymentMethod.toUpperCase()}</dd>
+            <dt>Placed</dt><dd>{formatDateTime(selected.createdAt)}</dd>
+            <dt>Customer</dt><dd>{customerOf(selected).name} {customerOf(selected).email && `· ${customerOf(selected).email}`}</dd>
+          </dl>
+
+          <div className="adm-section">
+            <h4>Ship to</h4>
+            <p style={{ margin: 0, lineHeight: 1.6 }}>
+              {selected.shippingAddress.fullName} · {selected.shippingAddress.phone}<br />
+              {selected.shippingAddress.addressLine1}{selected.shippingAddress.addressLine2 ? `, ${selected.shippingAddress.addressLine2}` : ''}<br />
+              {selected.shippingAddress.city}, {selected.shippingAddress.state} {selected.shippingAddress.pincode}
+            </p>
+          </div>
+
+          <div className="adm-section">
+            <h4>Items</h4>
+            <ul className="adm-list">
+              {selected.items.map((item) => (
+                <li key={item._id}>
+                  <span>{item.productName}<span className="adm-sub">{item.size} · {item.color} · qty {item.quantity}</span></span>
+                  <span>{formatPrice(item.price * item.quantity)}</span>
+                </li>
+              ))}
+              <li><span className="adm-sub">Subtotal</span><span>{formatPrice(selected.subtotal)}</span></li>
+              <li><span className="adm-sub">Shipping</span><span>{selected.shippingFee ? formatPrice(selected.shippingFee) : 'Free'}</span></li>
+              <li><strong>Total</strong><strong>{formatPrice(selected.totalAmount)}</strong></li>
+            </ul>
+          </div>
+        </Modal>
+      )}
     </>
+  )
+}
+
+export default function AdminOrdersPage() {
+  return (
+    <Suspense fallback={<Spinner />}>
+      <OrdersView />
+    </Suspense>
   )
 }

@@ -3,13 +3,14 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import { Toast, BagCountManager } from '@/components/ProductGrid'
+import Navbar from '@/components/layout/Navbar'
+import Footer from '@/components/layout/Footer'
+import Toast from '@/components/ui/Toast'
+import BagCountManager from '@/components/ui/BagCountManager'
 import { useAuth } from '@/context/AuthContext'
-import { getMyOrders, Order } from '@/lib/orders'
-import { getAddresses, Address } from '@/lib/addresses'
-import { formatPrice } from '@/lib/data'
+import { getMyOrders, Order } from '@/lib/api/orders'
+import { getAddresses, Address } from '@/lib/api/addresses'
+import { formatPrice } from '@/lib/format'
 
 export default function AccountPage() {
   const router = useRouter()

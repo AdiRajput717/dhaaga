@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import { BagCountManager, Toast } from '@/components/ProductGrid'
+import Navbar from '@/components/layout/Navbar'
+import Footer from '@/components/layout/Footer'
+import Toast from '@/components/ui/Toast'
+import BagCountManager from '@/components/ui/BagCountManager'
 import {
   getAddresses,
   createAddress,
@@ -13,7 +14,7 @@ import {
   deleteAddress,
   Address,
   AddressInput,
-} from '@/lib/addresses'
+} from '@/lib/api/addresses'
 import { useAuth } from '@/context/AuthContext'
 
 const INITIAL_FORM: AddressInput = {

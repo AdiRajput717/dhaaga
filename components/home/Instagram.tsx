@@ -75,7 +75,7 @@ export default function Instagram() {
       <div className="section-max">
         <div
           ref={headRef}
-          style={{ textAlign: 'center', marginBottom: 40, opacity: 0 }}
+          style={{ textAlign: 'center', marginBottom: 40, opacity: 0,}}
         >
           <div className="section-eyebrow">
             <div className="eyebrow-line" />

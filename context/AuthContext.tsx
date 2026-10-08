@@ -14,9 +14,9 @@ import {
   loginUser,
   registerUser,
   googleLogin as authGoogleLogin,
-} from "@/lib/auth";
-import { getCart } from "@/lib/cart";
-import { getWishlist } from "@/lib/wishlist";
+} from "@/lib/api/auth";
+import { getCart } from "@/lib/api/cart";
+import { getWishlist } from "@/lib/api/wishlist";
 
 interface AuthContextType {
   user: User | null;

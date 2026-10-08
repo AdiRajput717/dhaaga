@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
 const User = require("../models/User");
+const { getCookieOptions, SESSION_MAX_AGE_MS } = require("../utils/cookies");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
@@ -11,11 +12,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // reveal which emails are registered.
 const DUMMY_HASH = bcrypt.hashSync("dhaaga-dummy-password", 12);
 
-const cookieOptions = () => ({
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
-});
+const cookieOptions = getCookieOptions;
 
 const registerUser = async (req, res, next) => {
   try {
@@ -146,7 +143,7 @@ const loginUser = async (req, res, next) => {
 
     res.cookie("token", token, {
       ...cookieOptions(),
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: SESSION_MAX_AGE_MS,
     });
 
     res.status(200).json({
@@ -245,7 +242,7 @@ const googleLogin = async (req, res, next) => {
 
     res.cookie("token", token, {
       ...cookieOptions(),
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: SESSION_MAX_AGE_MS,
     });
 
     res.status(200).json({

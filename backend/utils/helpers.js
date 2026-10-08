@@ -22,12 +22,18 @@ const parsePagination = (query, { defaultLimit = 12, maxLimit = 50 } = {}) => {
   return { page, limit, skip: (page - 1) * limit };
 };
 
-const buildPagination = ({ page, limit }, total) => ({
-  page,
-  limit,
-  total,
-  pages: Math.max(Math.ceil(total / limit), 1),
-});
+const buildPagination = ({ page, limit }, total) => {
+  const pages = Math.max(Math.ceil(total / limit), 1);
+
+  return {
+    page,
+    limit,
+    total,
+    pages,
+    hasNext: page < pages,
+    hasPrev: page > 1,
+  };
+};
 
 module.exports = {
   isValidObjectId,

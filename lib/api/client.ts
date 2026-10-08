@@ -1,10 +1,10 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
 
 export type RequestOptions = Omit<RequestInit, "body"> & {
-  body?: any;
+  body?: unknown;
 };
 
-export async function apiFetch<T = any>(
+export async function apiFetch<T = unknown>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {

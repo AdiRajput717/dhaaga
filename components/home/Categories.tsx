@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { CATEGORIES } from '@/lib/data'
+import { CATEGORIES } from '@/lib/content'
 import { gsap, ScrollTrigger } from '@/lib/gsapUtils'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -67,7 +67,7 @@ export default function Categories() {
       ref={sectionRef}
       id="categories"
       className="section-pad"
-      style={{ background: '#F8F5EF', paddingTop: 0 }}
+      style={{ background: '#F8F5EF', paddingTop: 0, marginTop: 50 }}
     >
       <div className="section-max">
         {/* Head */}

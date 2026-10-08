@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { apiFetch } from "./client";
 import { Product } from "./products";
 
 export type CartItem = {

@@ -46,7 +46,7 @@ const seedDB = async () => {
       const savedCat = await Category.findOneAndUpdate(
         { slug: cat.slug },
         cat,
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
       );
       categoryMap[cat.slug] = savedCat._id;
     }
@@ -227,7 +227,7 @@ const seedDB = async () => {
       await Product.findOneAndUpdate(
         { slug: prod.slug },
         prod,
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: "after", setDefaultsOnInsert: true }
       );
     }
     console.log("Products seeded successfully.");

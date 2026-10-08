@@ -2,11 +2,15 @@ const Wishlist = require("../models/Wishlist");
 const Product = require("../models/Product");
 const { isValidObjectId } = require("../utils/helpers");
 
+// Deactivated products are hidden from the storefront, so they are hidden
+// from wishlists too (populate drops non-matching entries from the array).
+const ACTIVE_ONLY = { path: "products", match: { isActive: true } };
+
 const getWishlist = async (req, res) => {
   try {
     let wishlist = await Wishlist.findOne({
       user: req.user.userId,
-    }).populate("products");
+    }).populate(ACTIVE_ONLY);
 
     if (!wishlist) {
       wishlist = await Wishlist.create({
@@ -74,7 +78,7 @@ const addToWishlist = async (req, res) => {
       await wishlist.save();
     }
 
-    await wishlist.populate("products");
+    await wishlist.populate(ACTIVE_ONLY);
 
     res.status(200).json({
       message: "Product added to wishlist",
@@ -117,7 +121,7 @@ const removeFromWishlist = async (req, res) => {
     );
 
     await wishlist.save();
-    await wishlist.populate("products");
+    await wishlist.populate(ACTIVE_ONLY);
 
     res.status(200).json({
       message: "Product removed from wishlist",

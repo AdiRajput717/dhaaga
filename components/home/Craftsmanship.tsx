@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { CRAFT_PILLARS } from '@/lib/data'
+import { CRAFT_PILLARS } from '@/lib/content'
 import { gsap, ScrollTrigger } from '@/lib/gsapUtils'
 
 gsap.registerPlugin(ScrollTrigger)

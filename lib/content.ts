@@ -1,5 +1,6 @@
-// lib/data.ts
-// Central data store for Dhaaga-E-Jashn
+// lib/content.ts
+// Static storefront content (homepage products, nav/footer links, copy).
+// Live catalogue data comes from the API: see lib/api/.
 
 export interface Product {
   id: string
@@ -313,6 +314,10 @@ export const CRAFT_PILLARS = [
 
 export const NAV_LINKS = [
   {
+    label: 'Home',
+    href: '/',
+  },
+  {
     label: 'Women',
     href: '/shop',
   },
@@ -323,17 +328,12 @@ export const NAV_LINKS = [
   },
 
   {
-    label: 'Kurtas',
-    href: '/shop',
-  },
-
-  {
     label: 'Collections',
     href: '/shop',
   },
 
   {
-    label: 'Our Story',
+    label: 'About Us',
     href: '#story',
   },
 ]
@@ -430,6 +430,3 @@ export const FOOTER_LINKS = {
 /* =========================================================
    PRICE FORMATTER
    ========================================================= */
-
-export const formatPrice = (n: number): string =>
-  '₹' + n.toLocaleString('en-IN')

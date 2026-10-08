@@ -1,4 +1,4 @@
-import { apiFetch } from "./api";
+import { apiFetch } from "./client";
 import { Category } from "./categories";
 
 export type ProductVariant = {

@@ -3,9 +3,9 @@
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import Navbar from "@/components/Navbar";
-import Footer from "@/components/Footer";
-import GoogleLoginButton from "@/components/GoogleLoginButton";
+import Navbar from "@/components/layout/Navbar";
+import Footer from "@/components/layout/Footer";
+import GoogleLoginButton from "@/components/auth/GoogleLoginButton";
 import { useAuth } from "@/context/AuthContext";
 
 function RegisterForm() {

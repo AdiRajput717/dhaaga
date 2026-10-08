@@ -1,59 +1,109 @@
 const Category = require("../models/Category");
+const Product = require("../models/Product");
+const { slugify } = require("../utils/helpers");
 
-const createCategory = async (req, res) => {
-  try {
-    const { name, slug, description, image } = req.body || {};
+// Validates and normalises a category payload.
+// partial=true (updates) only checks the fields that were sent.
+// Every value must be the right primitive type, which also blocks
+// NoSQL operator payloads such as {"name": {"$ne": null}}.
+const parseCategoryBody = (body, { partial }) => {
+  const data = {};
+  const has = (key) => body[key] !== undefined;
 
-    if (!name || !slug) {
-      return res.status(400).json({
-        message: "Name and slug are required",
-      });
+  if (!partial || has("name")) {
+    if (typeof body.name !== "string" || !body.name.trim()) {
+      return { error: "Category name is required" };
     }
 
-    const existingCategory = await Category.findOne({
-      $or: [{ name }, { slug }],
+    if (body.name.trim().length > 60) {
+      return { error: "Category name must be 60 characters or fewer" };
+    }
+
+    data.name = body.name.trim();
+  }
+
+  if (has("slug") || !partial) {
+    const source = has("slug") ? body.slug : data.name;
+
+    if (typeof source !== "string" || !slugify(source)) {
+      return { error: "A valid slug is required" };
+    }
+
+    data.slug = slugify(source);
+  }
+
+  if (has("description")) {
+    if (typeof body.description !== "string" || body.description.length > 500) {
+      return { error: "Description must be text up to 500 characters" };
+    }
+
+    data.description = body.description.trim();
+  }
+
+  if (has("image")) {
+    if (typeof body.image !== "string" || body.image.length > 500) {
+      return { error: "Image must be a URL or path up to 500 characters" };
+    }
+
+    data.image = body.image.trim();
+  }
+
+  if (has("isActive")) {
+    if (typeof body.isActive !== "boolean") {
+      return { error: "isActive must be true or false" };
+    }
+
+    data.isActive = body.isActive;
+  }
+
+  return { data };
+};
+
+const createCategory = async (req, res, next) => {
+  try {
+    const { data, error } = parseCategoryBody(req.body, { partial: false });
+
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    const existing = await Category.findOne({
+      $or: [{ name: data.name }, { slug: data.slug }],
     });
 
-    if (existingCategory) {
+    if (existing) {
       return res.status(409).json({
         message: "Category name or slug already exists",
       });
     }
 
-    const category = await Category.create({
-      name,
-      slug,
-      description,
-      image,
-    });
+    const category = await Category.create(data);
 
     res.status(201).json({
       message: "Category created successfully",
       category,
     });
   } catch (error) {
-    console.error("Create category error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const getCategories = async (req, res) => {
+const getCategories = async (req, res, next) => {
   try {
-    const categories = await Category.find({
-      isActive: true,
-    }).sort({ name: 1 });
+    const categories = await Category.find({ isActive: true }).sort({
+      name: 1,
+    });
 
     res.status(200).json({ categories });
   } catch (error) {
-    console.error("Get categories error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const getCategoryBySlug = async (req, res) => {
+const getCategoryBySlug = async (req, res, next) => {
   try {
     const category = await Category.findOne({
-      slug: req.params.slug,
+      slug: req.params.slug.toLowerCase(),
       isActive: true,
     });
 
@@ -65,12 +115,11 @@ const getCategoryBySlug = async (req, res) => {
 
     res.status(200).json({ category });
   } catch (error) {
-    console.error("Get category error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const updateCategory = async (req, res) => {
+const updateCategory = async (req, res, next) => {
   try {
     const category = await Category.findById(req.params.id);
 
@@ -78,11 +127,15 @@ const updateCategory = async (req, res) => {
       return res.status(404).json({ message: "Category not found" });
     }
 
-    const { name, slug, description, image, isActive } = req.body || {};
+    const { data, error } = parseCategoryBody(req.body, { partial: true });
 
-    if (slug && slug !== category.slug) {
+    if (error) {
+      return res.status(400).json({ message: error });
+    }
+
+    if (data.slug && data.slug !== category.slug) {
       const existing = await Category.findOne({
-        slug,
+        slug: data.slug,
         _id: { $ne: category._id },
       });
 
@@ -93,9 +146,9 @@ const updateCategory = async (req, res) => {
       }
     }
 
-    if (name && name !== category.name) {
+    if (data.name && data.name !== category.name) {
       const existing = await Category.findOne({
-        name,
+        name: data.name,
         _id: { $ne: category._id },
       });
 
@@ -106,11 +159,7 @@ const updateCategory = async (req, res) => {
       }
     }
 
-    category.name = name ?? category.name;
-    category.slug = slug ?? category.slug;
-    category.description = description ?? category.description;
-    category.image = image ?? category.image;
-    category.isActive = isActive ?? category.isActive;
+    Object.assign(category, data);
 
     await category.save();
 
@@ -119,12 +168,13 @@ const updateCategory = async (req, res) => {
       category,
     });
   } catch (error) {
-    console.error("Update category error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const deleteCategory = async (req, res) => {
+// Soft delete: products keep pointing at the category, they are simply
+// hidden from the storefront while it is inactive.
+const deleteCategory = async (req, res, next) => {
   try {
     const category = await Category.findById(req.params.id);
 
@@ -135,12 +185,17 @@ const deleteCategory = async (req, res) => {
     category.isActive = false;
     await category.save();
 
+    const affectedProducts = await Product.countDocuments({
+      category: category._id,
+      isActive: true,
+    });
+
     res.status(200).json({
       message: "Category deleted successfully",
+      affectedProducts,
     });
   } catch (error) {
-    console.error("Delete category error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 

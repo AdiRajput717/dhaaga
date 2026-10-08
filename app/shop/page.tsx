@@ -8,18 +8,16 @@ import {
   Suspense,
 } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import ProductCard from '@/components/ProductCard'
-import {
-  BagCountManager,
-  QuickViewModal,
-  Toast,
-} from '@/components/ProductGrid'
+import Navbar from '@/components/layout/Navbar'
+import Footer from '@/components/layout/Footer'
+import ProductCard from '@/components/shop/ProductCard'
+import Toast from '@/components/ui/Toast'
+import BagCountManager from '@/components/ui/BagCountManager'
+import QuickViewModal from '@/components/shop/QuickViewModal'
 import { gsap } from '@/lib/gsapUtils'
-import { getProducts, Product as APIProduct } from '@/lib/products'
-import { getCategories, Category } from '@/lib/categories'
-import { formatPrice } from '@/lib/data'
+import { getProducts, Product as APIProduct } from '@/lib/api/products'
+import { getCategories, Category } from '@/lib/api/categories'
+import { formatPrice } from '@/lib/format'
 
 type SortOption = 'newest' | 'price_asc' | 'price_desc' | 'name'
 
@@ -174,7 +172,7 @@ function ShopContent() {
   return (
     <main className="shop-page">
       {/* SHOP HERO */}
-      <section className="shop-hero">
+      {/* <section className="shop-hero">
         <div className="shop-hero-inner">
           <div className="section-eyebrow shop-eyebrow">
             <div className="eyebrow-line" />
@@ -188,7 +186,7 @@ function ShopContent() {
             Thoughtful Indian silhouettes, quiet details and everyday pieces made for your jashn.
           </p>
         </div>
-      </section>
+      </section> */}
 
       {/* SHOP CONTENT */}
       <section className="shop-content" aria-label="Shop products">

@@ -11,6 +11,7 @@ const {
 const { reserveStock, restoreStock } = require("../services/inventory.service");
 const {
   isValidObjectId,
+  escapeRegex,
   parsePagination,
   buildPagination,
 } = require("../utils/helpers");
@@ -158,16 +159,27 @@ const createOrder = async (req, res, next) => {
   }
 };
 
+// ?page=&limit=  (newest first; capped so history can never grow unbounded)
 const getMyOrders = async (req, res, next) => {
   try {
-    const orders = await Order.find({
-      user: req.user.userId,
-    }).sort({
-      createdAt: -1,
+    const pagination = parsePagination(req.query, {
+      defaultLimit: 50,
+      maxLimit: 100,
     });
+
+    const filter = { user: req.user.userId };
+
+    const [orders, total] = await Promise.all([
+      Order.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit),
+      Order.countDocuments(filter),
+    ]);
 
     res.status(200).json({
       orders,
+      pagination: buildPagination(pagination, total),
     });
   } catch (error) {
     next(error);
@@ -195,16 +207,23 @@ const getOrderById = async (req, res, next) => {
   }
 };
 
-// Admin: ?page=&limit=&status=&paymentStatus=
+// Admin: ?page=&limit=&status=&paymentStatus=&q=<order number>
 const getAllOrders = async (req, res, next) => {
   try {
-    const { status, paymentStatus } = req.query;
+    const { status, paymentStatus, q } = req.query;
     const pagination = parsePagination(req.query, {
       defaultLimit: 20,
       maxLimit: 100,
     });
 
     const filter = {};
+
+    if (typeof q === "string" && q.trim()) {
+      filter.orderNumber = {
+        $regex: escapeRegex(q.trim()),
+        $options: "i",
+      };
+    }
 
     if (typeof status === "string" && ORDER_STATUSES.includes(status)) {
       filter.orderStatus = status;
@@ -296,7 +315,7 @@ const updateOrderStatus = async (req, res, next) => {
     const updatedOrder = await Order.findOneAndUpdate(
       { _id: order._id, orderStatus: order.orderStatus },
       { $set: update },
-      { new: true }
+      { returnDocument: "after" }
     );
 
     if (!updatedOrder) {

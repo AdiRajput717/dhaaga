@@ -1,16 +1,16 @@
-import Navbar from '@/components/Navbar'
-import Hero from '@/components/Hero'
-import BrandIntro from '@/components/BrandIntro'
-import ProductGrid from '@/components/ProductGrid'
-import Categories from '@/components/Categories'
-import Story from '@/components/Story'
-import FeaturedCollection from '@/components/FeaturedCollection'
-import BannerSection from '@/components/BannerSection'
-import Craftsmanship from '@/components/Craftsmanship'
-import Instagram from '@/components/Instagram'
-import Newsletter from '@/components/Newsletter'
-import CTA from '@/components/CTA'
-import Footer from '@/components/Footer'
+import Navbar from '@/components/layout/Navbar'
+import Hero from '@/components/home/Hero'
+import BrandIntro from '@/components/home/BrandIntro'
+import ProductGrid from '@/components/shop/ProductGrid'
+import Categories from '@/components/home/Categories'
+import Story from '@/components/home/Story'
+import FeaturedCollection from '@/components/home/FeaturedCollection'
+import BannerSection from '@/components/home/BannerSection'
+import Craftsmanship from '@/components/home/Craftsmanship'
+import Instagram from '@/components/home/Instagram'
+import Newsletter from '@/components/home/Newsletter'
+import CTA from '@/components/home/CTA'
+import Footer from '@/components/layout/Footer'
 
 export default function Home() {
   return (
@@ -22,7 +22,7 @@ export default function Home() {
         <Hero />
 
         {/* 2. Brand intro quote */}
-        <BrandIntro />
+        {/* <BrandIntro /> */}
 
         {/* 3. New Arrivals */}
         <ProductGrid
@@ -36,7 +36,7 @@ export default function Home() {
         <Categories />
 
         {/* 5. Brand Story */}
-        <Story />
+        {/* <Story /> */}
 
         {/* 6. Featured Collection (dark navy section) */}
         <FeaturedCollection />

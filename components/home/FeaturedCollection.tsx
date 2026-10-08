@@ -2,7 +2,8 @@
 
 import { useEffect, useRef } from 'react'
 import Link from 'next/link'
-import { PRODUCTS, formatPrice, type Product } from '@/lib/data'
+import { PRODUCTS, type Product } from '@/lib/content'
+import { formatPrice } from '@/lib/format'
 import { gsap, ScrollTrigger } from '@/lib/gsapUtils'
 
 gsap.registerPlugin(ScrollTrigger)

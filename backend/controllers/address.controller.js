@@ -1,6 +1,15 @@
 const Address = require("../models/Address");
 
-const PHONE_REGEX = /^[6-9]\d{9}$/; // 10-digit Indian mobile number
+// Accepts "9876543210", "+91 98765 43210", "91-9876543210" or "09876543210"
+// and returns the bare 10-digit mobile number (or null if it is not one).
+// The country code is only stripped when 10 digits remain, so a valid number
+// that happens to start with 91 (e.g. 9123456789) is left intact.
+const PHONE_REGEX = /^(?:\+?91|0)?([6-9]\d{9})$/;
+
+const normalisePhone = (raw) => {
+  const match = raw.replace(/[\s-]/g, "").match(PHONE_REGEX);
+  return match ? match[1] : null;
+};
 const PINCODE_REGEX = /^[1-9]\d{5}$/; // 6-digit Indian PIN code
 
 const STRING_FIELDS = [
@@ -29,12 +38,13 @@ const cleanAddressBody = (body, { partial }) => {
   }
 
   if (data.phone !== undefined) {
-    // allow "+91 98765 43210" style input
-    data.phone = data.phone.replace(/^\+?91/, "").replace(/[\s-]/g, "");
+    const phone = normalisePhone(data.phone);
 
-    if (!PHONE_REGEX.test(data.phone)) {
+    if (!phone) {
       return { error: "Please provide a valid 10-digit phone number" };
     }
+
+    data.phone = phone;
   }
 
   if (data.pincode !== undefined && !PINCODE_REGEX.test(data.pincode)) {

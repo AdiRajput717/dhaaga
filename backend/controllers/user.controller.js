@@ -1,19 +1,50 @@
 const User = require("../models/User");
+const Order = require("../models/Order");
+const {
+  escapeRegex,
+  parsePagination,
+  buildPagination,
+} = require("../utils/helpers");
 
-const getAllUsers = async (req, res) => {
+// Admin: ?page=&limit=&q=<name or email>&role=customer|admin
+const getAllUsers = async (req, res, next) => {
   try {
-    const users = await User.find()
-      .select("-password")
-      .sort({ createdAt: -1 });
+    const { q, role } = req.query;
+    const pagination = parsePagination(req.query, {
+      defaultLimit: 20,
+      maxLimit: 100,
+    });
 
-    res.status(200).json({ users });
+    const filter = {};
+
+    if (typeof q === "string" && q.trim()) {
+      const pattern = { $regex: escapeRegex(q.trim()), $options: "i" };
+      filter.$or = [{ name: pattern }, { email: pattern }];
+    }
+
+    if (role === "customer" || role === "admin") {
+      filter.role = role;
+    }
+
+    const [users, total] = await Promise.all([
+      User.find(filter)
+        .select("-password")
+        .sort({ createdAt: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit),
+      User.countDocuments(filter),
+    ]);
+
+    res.status(200).json({
+      users,
+      pagination: buildPagination(pagination, total),
+    });
   } catch (error) {
-    console.error("Get all users error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const getUserById = async (req, res) => {
+const getUserById = async (req, res, next) => {
   try {
     const user = await User.findById(req.params.id).select("-password");
 
@@ -21,16 +52,17 @@ const getUserById = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.status(200).json({ user });
+    const orderCount = await Order.countDocuments({ user: user._id });
+
+    res.status(200).json({ user, orderCount });
   } catch (error) {
-    console.error("Get user error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 
-const updateUserRole = async (req, res) => {
+const updateUserRole = async (req, res, next) => {
   try {
-    const { role } = req.body || {};
+    const { role } = req.body;
 
     if (!["customer", "admin"].includes(role)) {
       return res.status(400).json({
@@ -66,8 +98,7 @@ const updateUserRole = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Update user role error:", error);
-    res.status(500).json({ message: "Something went wrong" });
+    next(error);
   }
 };
 

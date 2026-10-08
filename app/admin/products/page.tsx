@@ -1,564 +1,292 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import Navbar from '@/components/Navbar'
-import Footer from '@/components/Footer'
-import AdminNav from '@/components/admin/AdminNav'
-import { BagCountManager, Toast } from '@/components/ProductGrid'
+import { useState } from 'react'
 import {
-  getAdminProducts,
   createProduct,
-  updateProduct,
-  deleteProduct,
   getAdminCategories,
-} from '@/lib/admin'
-import { Product as APIProduct } from '@/lib/products'
-import { Category } from '@/lib/categories'
-import { useAuth } from '@/context/AuthContext'
-import { formatPrice } from '@/lib/data'
+  getAdminProductById,
+  getAdminProducts,
+  updateProduct,
+} from '@/lib/api/admin'
+import type { Product, ProductVariant } from '@/lib/api/products'
+import { useFetch } from '@/lib/hooks/useFetch'
+import { useDebounced } from '@/lib/hooks/useDebounced'
+import { formatPrice } from '@/lib/format'
+import {
+  Badge,
+  EmptyState,
+  ErrorNote,
+  Field,
+  Modal,
+  notify,
+  PageHeader,
+  Pagination,
+  Spinner,
+} from '@/components/admin/ui'
 
-interface VariantForm {
-  size: string
-  color: string
-  stock: number
-}
+const SIZE_OPTIONS = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 
-interface ProductFormState {
+type FormState = {
+  id?: string
   name: string
   slug: string
   description: string
-  price: number
+  price: string
   category: string
   images: string
   isActive: boolean
-  variants: VariantForm[]
+  variants: { size: string; color: string; stock: string }[]
 }
 
-const INITIAL_PRODUCT_FORM: ProductFormState = {
+const EMPTY_FORM: FormState = {
   name: '',
   slug: '',
   description: '',
-  price: 1499,
+  price: '',
   category: '',
   images: '',
   isActive: true,
-  variants: [
-    { size: 'S', color: 'Ivory', stock: 15 },
-    { size: 'M', color: 'Ivory', stock: 20 },
-    { size: 'L', color: 'Ivory', stock: 15 },
-  ],
+  variants: [{ size: 'M', color: '', stock: '0' }],
+}
+
+const categoryId = (c: Product['category']) => (typeof c === 'string' ? c : c._id)
+const categoryName = (c: Product['category']) => (typeof c === 'string' ? '—' : c.name)
+const totalStock = (variants: ProductVariant[]) => variants.reduce((sum, v) => sum + v.stock, 0)
+
+const toForm = (p: Product): FormState => ({
+  id: p._id,
+  name: p.name,
+  slug: p.slug,
+  description: p.description,
+  price: String(p.price),
+  category: categoryId(p.category),
+  images: p.images.join('\n'),
+  isActive: p.isActive,
+  variants: p.variants.map((v) => ({ size: v.size, color: v.color, stock: String(v.stock) })),
+})
+
+/** Returns an error message, or the cleaned payload. */
+function validate(form: FormState) {
+  const price = Number(form.price)
+  if (!form.name.trim()) return { error: 'Name is required' }
+  if (!form.description.trim()) return { error: 'Description is required' }
+  if (!form.price || !Number.isFinite(price) || price < 0) return { error: 'Enter a valid price' }
+  if (!form.category) return { error: 'Choose a category' }
+
+  const variants = form.variants.map((v) => ({ size: v.size.trim(), color: v.color.trim(), stock: Number(v.stock) }))
+  if (variants.some((v) => !v.size || !v.color)) return { error: 'Every variant needs a size and a colour' }
+  if (variants.some((v) => !Number.isInteger(v.stock) || v.stock < 0)) return { error: 'Stock must be a whole number, 0 or more' }
+
+  const seen = new Set(variants.map((v) => `${v.size.toLowerCase()}|${v.color.toLowerCase()}`))
+  if (seen.size !== variants.length) return { error: 'Two variants share the same size and colour' }
+
+  return {
+    data: {
+      name: form.name.trim(),
+      ...(form.slug.trim() ? { slug: form.slug.trim() } : {}),
+      description: form.description.trim(),
+      price,
+      category: form.category,
+      images: form.images.split('\n').map((s) => s.trim()).filter(Boolean),
+      isActive: form.isActive,
+      variants,
+    },
+  }
 }
 
 export default function AdminProductsPage() {
-  const router = useRouter()
-  const { user, loading: authLoading } = useAuth()
-
-  const [products, setProducts] = useState<APIProduct[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
-  const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'active' | 'inactive' | undefined>(undefined)
-
-  // Modal State
-  const [showModal, setShowModal] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [formData, setFormData] = useState<ProductFormState>(INITIAL_PRODUCT_FORM)
+  const [status, setStatus] = useState<'' | 'active' | 'inactive'>('')
+  const [page, setPage] = useState(1)
+  const [form, setForm] = useState<FormState | null>(null)
+  const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
 
-  const loadData = useCallback(async () => {
+  const q = useDebounced(search.trim())
+  const products = useFetch(
+    () => getAdminProducts({ page, limit: 12, q: q || undefined, status: status || undefined }),
+    [page, q, status]
+  )
+  const categories = useFetch(getAdminCategories)
+
+  const openEdit = async (id: string) => {
     try {
-      setLoading(true)
-      const [prodRes, catRes] = await Promise.all([
-        getAdminProducts({ q: search || undefined, status: statusFilter }),
-        getAdminCategories(),
-      ])
-      setProducts(prodRes.products || [])
-      setCategories(catRes.categories || [])
-    } catch (err: any) {
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: err?.message || 'Failed to load products' })
-      )
+      // Fresh copy, so we never save over stock that changed since the list loaded.
+      const { product } = await getAdminProductById(id)
+      setFormError('')
+      setForm(toForm(product))
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not load product')
+    }
+  }
+
+  const setField = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+    setForm((f) => (f ? { ...f, [key]: value } : f))
+
+  const setVariant = (i: number, patch: Partial<FormState['variants'][number]>) =>
+    setForm((f) => (f ? { ...f, variants: f.variants.map((v, idx) => (idx === i ? { ...v, ...patch } : v)) } : f))
+
+  const save = async () => {
+    if (!form) return
+    const result = validate(form)
+    if (result.error || !result.data) return setFormError(result.error ?? 'Invalid form')
+
+    setSaving(true)
+    setFormError('')
+    try {
+      if (form.id) await updateProduct(form.id, result.data)
+      else await createProduct(result.data)
+      notify(form.id ? 'Product updated' : 'Product created')
+      setForm(null)
+      products.reload()
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Could not save product')
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
-  }, [search, statusFilter])
-
-  useEffect(() => {
-    if (!authLoading) {
-      if (!user || user.role !== 'admin') {
-        router.replace('/login?redirect=/admin/products')
-        return
-      }
-      loadData()
-    }
-  }, [user, authLoading, router, loadData])
-
-  const openAddModal = () => {
-    setEditingId(null)
-    setFormData({
-      ...INITIAL_PRODUCT_FORM,
-      category: categories[0]?._id || '',
-    })
-    setFormError('')
-    setShowModal(true)
   }
 
-  const openEditModal = (prod: APIProduct) => {
-    setEditingId(prod._id)
-    setFormData({
-      name: prod.name,
-      slug: prod.slug,
-      description: prod.description,
-      price: prod.price,
-      category: typeof prod.category === 'object' ? prod.category._id : prod.category,
-      images: prod.images?.join('\n') || '',
-      isActive: prod.isActive,
-      variants: prod.variants?.map((v) => ({ size: v.size, color: v.color, stock: v.stock })) || [],
-    })
-    setFormError('')
-    setShowModal(true)
-  }
-
-  const handleDeactivate = async (id: string) => {
-    if (!confirm('Deactivate this product from the public catalog?')) return
+  const toggleActive = async (p: Product) => {
+    const next = !p.isActive
+    if (!next && !window.confirm(`Hide "${p.name}" from the storefront?`)) return
     try {
-      await deleteProduct(id)
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: 'Product deactivated' })
-      )
-      loadData()
-    } catch (err: any) {
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: err?.message || 'Operation failed' })
-      )
+      await updateProduct(p._id, { isActive: next })
+      notify(next ? 'Product is live again' : 'Product hidden')
+      products.reload()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not update product')
     }
-  }
-
-  const handleReactivate = async (prod: APIProduct) => {
-    try {
-      await updateProduct(prod._id, { isActive: true })
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: 'Product reactivated' })
-      )
-      loadData()
-    } catch (err: any) {
-      window.dispatchEvent(
-        new CustomEvent('dhaaga:toast', { detail: err?.message || 'Operation failed' })
-      )
-    }
-  }
-
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setFormError('')
-
-    const imagesArray = formData.images
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
-
-    try {
-      setSubmitting(true)
-      if (editingId) {
-        await updateProduct(editingId, {
-          name: formData.name,
-          slug: formData.slug || undefined,
-          description: formData.description,
-          price: Number(formData.price),
-          category: formData.category,
-          images: imagesArray,
-          variants: formData.variants,
-          isActive: formData.isActive,
-        })
-        window.dispatchEvent(
-          new CustomEvent('dhaaga:toast', { detail: 'Product updated successfully' })
-        )
-      } else {
-        await createProduct({
-          name: formData.name,
-          slug: formData.slug || undefined,
-          description: formData.description,
-          price: Number(formData.price),
-          category: formData.category,
-          images: imagesArray,
-          variants: formData.variants,
-          isActive: formData.isActive,
-        })
-        window.dispatchEvent(
-          new CustomEvent('dhaaga:toast', { detail: 'Product created successfully' })
-        )
-      }
-
-      setShowModal(false)
-      loadData()
-    } catch (err: any) {
-      setFormError(err?.message || 'Failed to save product')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const addVariant = () => {
-    setFormData((prev) => ({
-      ...prev,
-      variants: [...prev.variants, { size: 'M', color: 'Ivory', stock: 10 }],
-    }))
-  }
-
-  const removeVariant = (index: number) => {
-    setFormData((prev) => ({
-      ...prev,
-      variants: prev.variants.filter((_, i) => i !== index),
-    }))
-  }
-
-  const updateVariantField = (index: number, field: keyof VariantForm, value: any) => {
-    setFormData((prev) => {
-      const next = [...prev.variants]
-      next[index] = { ...next[index], [field]: value }
-      return { ...prev, variants: next }
-    })
   }
 
   return (
     <>
-      <Navbar />
-      <BagCountManager />
-      <Toast />
-
-      <main style={{ minHeight: '80vh', padding: '48px 24px 100px', maxWidth: 1180, margin: '0 auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 16, marginBottom: 28 }}>
-          <div>
-            <span style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#C99A3D', fontWeight: 600 }}>
-              INVENTORY &amp; CATALOG
-            </span>
-            <h1 style={{ fontFamily: "var(--font-serif, 'Cormorant Garamond', serif)", fontSize: '2.8rem', color: '#06223C', fontWeight: 500, marginTop: 4 }}>
-              Manage Products
-            </h1>
-          </div>
-
+      <PageHeader
+        title="Products"
+        subtitle="Everything in your catalogue, including hidden items."
+        action={
           <button
-            type="button"
-            onClick={openAddModal}
-            className="btn-primary"
-            style={{ display: 'inline-flex' }}
+            className="adm-btn adm-btn--gold"
+            onClick={() => { setFormError(''); setForm({ ...EMPTY_FORM, category: categories.data?.categories.find((c) => c.isActive)?._id ?? '' }) }}
           >
-            + ADD PRODUCT
+            + New product
           </button>
-        </div>
+        }
+      />
 
-        <AdminNav />
+      <div className="adm-toolbar">
+        <input className="adm-input" placeholder="Search products…" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1) }} aria-label="Search products" />
+        <select className="adm-select" value={status} onChange={(e) => { setStatus(e.target.value as typeof status); setPage(1) }} aria-label="Visibility">
+          <option value="">All products</option>
+          <option value="active">Live</option>
+          <option value="inactive">Hidden</option>
+        </select>
+      </div>
 
-        {/* Filters & Search */}
-        <div style={{ display: 'flex', gap: 16, marginBottom: 24, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            type="search"
-            placeholder="Search by product name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ padding: '10px 14px', border: '1px solid rgba(6,34,60,0.15)', background: '#FFF', fontSize: 13, minWidth: 260 }}
-          />
+      {products.error && <ErrorNote message={products.error} onRetry={products.reload} />}
+      {!products.data && !products.error && <Spinner />}
 
-          <select
-            value={statusFilter || ''}
-            onChange={(e) => setStatusFilter((e.target.value as any) || undefined)}
-            style={{ padding: '10px 14px', border: '1px solid rgba(6,34,60,0.15)', background: '#FFF', fontSize: 13 }}
-          >
-            <option value="">All Statuses</option>
-            <option value="active">Active Only</option>
-            <option value="inactive">Inactive Only</option>
-          </select>
-        </div>
-
-        {/* Products Table */}
-        <div style={{ background: '#FFFFFF', border: '1px solid rgba(6,34,60,0.08)', padding: '24px 28px' }}>
-          {loading ? (
-            <div style={{ padding: '60px 0', textAlign: 'center' }}>
-              <p style={{ fontSize: 13, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#496174' }}>
-                Loading catalog...
-              </p>
-            </div>
-          ) : products.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, textAlign: 'left' }}>
+      {products.data && (
+        <>
+          <div className="adm-tablewrap" style={{ opacity: products.loading ? 0.6 : 1 }}>
+            {products.data.products.length === 0 ? (
+              <EmptyState title="No products found" hint="Add your first product with the button above." />
+            ) : (
+              <table className="adm-table">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(6,34,60,0.1)', color: '#496174' }}>
-                    <th style={{ padding: '12px 14px' }}>Product</th>
-                    <th style={{ padding: '12px 14px' }}>Category</th>
-                    <th style={{ padding: '12px 14px' }}>Price</th>
-                    <th style={{ padding: '12px 14px' }}>Variants (Stock)</th>
-                    <th style={{ padding: '12px 14px' }}>Status</th>
-                    <th style={{ padding: '12px 14px' }}>Actions</th>
-                  </tr>
+                  <tr><th>Product</th><th>Category</th><th className="num">Price</th><th className="num">Stock</th><th>Status</th><th /></tr>
                 </thead>
                 <tbody>
-                  {products.map((prod) => {
-                    const totalStock = prod.variants?.reduce((sum, v) => sum + v.stock, 0) || 0
+                  {products.data.products.map((p) => {
+                    const stock = totalStock(p.variants)
                     return (
-                      <tr key={prod._id} style={{ borderBottom: '1px solid rgba(6,34,60,0.05)' }}>
-                        <td style={{ padding: '14px' }}>
-                          <strong style={{ color: '#06223C', display: 'block' }}>{prod.name}</strong>
-                          <span style={{ fontSize: 11, color: '#496174' }}>/{prod.slug}</span>
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          {typeof prod.category === 'object' ? prod.category.name : '—'}
-                        </td>
-                        <td style={{ padding: '14px', fontWeight: 600 }}>
-                          {formatPrice(prod.price)}
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <span>{prod.variants?.length || 0} variants ({totalStock} total in stock)</span>
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <span
-                            style={{
-                              fontSize: 10,
-                              letterSpacing: '0.1em',
-                              textTransform: 'uppercase',
-                              fontWeight: 700,
-                              padding: '2px 8px',
-                              background: prod.isActive ? 'rgba(46,125,50,0.1)' : 'rgba(180,40,40,0.1)',
-                              color: prod.isActive ? '#2E7D32' : '#C33',
-                            }}
-                          >
-                            {prod.isActive ? 'ACTIVE' : 'INACTIVE'}
-                          </span>
-                        </td>
-                        <td style={{ padding: '14px' }}>
-                          <div style={{ display: 'flex', gap: 12 }}>
-                            <button
-                              type="button"
-                              onClick={() => openEditModal(prod)}
-                              style={{ color: '#06223C', fontWeight: 600, textDecoration: 'underline' }}
-                            >
-                              Edit
-                            </button>
-                            {prod.isActive ? (
-                              <button
-                                type="button"
-                                onClick={() => handleDeactivate(prod._id)}
-                                style={{ color: '#C33', textDecoration: 'underline' }}
-                              >
-                                Deactivate
-                              </button>
+                      <tr key={p._id}>
+                        <td>
+                          <div className="adm-cell">
+                            {p.images[0] ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img className="adm-thumb" src={p.images[0]} alt="" />
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleReactivate(prod)}
-                                style={{ color: '#2E7D32', textDecoration: 'underline' }}
-                              >
-                                Reactivate
-                              </button>
+                              <span className="adm-thumb adm-thumb--empty">◫</span>
                             )}
+                            <span><strong>{p.name}</strong><span className="adm-sub">{p.variants.length} variant{p.variants.length === 1 ? '' : 's'} · /{p.slug}</span></span>
                           </div>
+                        </td>
+                        <td>{categoryName(p.category)}</td>
+                        <td className="num">{formatPrice(p.price)}</td>
+                        <td className="num"><Badge tone={stock === 0 ? 'bad' : stock <= 5 ? 'warn' : 'neutral'}>{stock}</Badge></td>
+                        <td><Badge tone={p.isActive ? 'good' : 'neutral'}>{p.isActive ? 'Live' : 'Hidden'}</Badge></td>
+                        <td className="actions">
+                          <button className="adm-btn adm-btn--ghost adm-btn--sm" onClick={() => openEdit(p._id)}>Edit</button>{' '}
+                          <button className="adm-btn adm-btn--ghost adm-btn--sm" onClick={() => toggleActive(p)}>{p.isActive ? 'Hide' : 'Show'}</button>
                         </td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
-            </div>
-          ) : (
-            <p style={{ padding: '30px 0', textAlign: 'center', color: '#496174' }}>No products found matching criteria.</p>
-          )}
-        </div>
-      </main>
-
-      {/* Add / Edit Product Modal */}
-      {showModal && (
-        <div className="modal-overlay open" role="dialog" aria-modal="true">
-          <div className="modal-box" style={{ maxWidth: 640, maxHeight: '90vh', overflowY: 'auto', padding: 36 }}>
-            <button
-              type="button"
-              className="modal-close"
-              onClick={() => setShowModal(false)}
-            >
-              ✕
-            </button>
-
-            <h3 style={{ fontFamily: "var(--font-serif, 'Cormorant Garamond', serif)", fontSize: '1.8rem', color: '#06223C', marginBottom: 4 }}>
-              {editingId ? 'Edit Product' : 'Create New Product'}
-            </h3>
-
-            {formError && (
-              <div style={{ background: 'rgba(180,40,40,0.08)', border: '1px solid rgba(180,40,40,0.2)', color: '#900', padding: '8px 12px', fontSize: 13, marginBottom: 16 }}>
-                {formError}
-              </div>
             )}
-
-            <form onSubmit={handleFormSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                    Product Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                    Slug (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={formData.slug}
-                    onChange={(e) => setFormData({ ...formData, slug: e.target.value })}
-                    placeholder="auto-generated-if-blank"
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)' }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                    Price (₹) *
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    required
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)' }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                    Category *
-                  </label>
-                  <select
-                    required
-                    value={formData.category}
-                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                    style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)', background: '#FFF' }}
-                  >
-                    <option value="">Select Category</option>
-                    {categories.map((cat) => (
-                      <option key={cat._id} value={cat._id}>
-                        {cat.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                  Description *
-                </label>
-                <textarea
-                  rows={3}
-                  required
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)', fontFamily: 'inherit', fontSize: 13 }}
-                />
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600, marginBottom: 4 }}>
-                  Image URLs (One per line)
-                </label>
-                <textarea
-                  rows={2}
-                  value={formData.images}
-                  onChange={(e) => setFormData({ ...formData, images: e.target.value })}
-                  placeholder="https://example.com/image1.jpg"
-                  style={{ width: '100%', padding: '8px 12px', border: '1px solid rgba(6,34,60,0.2)', fontFamily: 'inherit', fontSize: 13 }}
-                />
-              </div>
-
-              {/* Variants Builder */}
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <label style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#06223C', fontWeight: 600 }}>
-                    Variants &amp; Stock
-                  </label>
-                  <button
-                    type="button"
-                    onClick={addVariant}
-                    style={{ fontSize: 11, color: '#C99A3D', fontWeight: 700, textTransform: 'uppercase' }}
-                  >
-                    + Add Variant
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {formData.variants.map((v, idx) => (
-                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 8, alignItems: 'center' }}>
-                      <input
-                        type="text"
-                        placeholder="Size (e.g. M)"
-                        value={v.size}
-                        onChange={(e) => updateVariantField(idx, 'size', e.target.value)}
-                        required
-                        style={{ padding: '6px 10px', border: '1px solid rgba(6,34,60,0.2)', fontSize: 12 }}
-                      />
-                      <input
-                        type="text"
-                        placeholder="Color (e.g. Navy)"
-                        value={v.color}
-                        onChange={(e) => updateVariantField(idx, 'color', e.target.value)}
-                        required
-                        style={{ padding: '6px 10px', border: '1px solid rgba(6,34,60,0.2)', fontSize: 12 }}
-                      />
-                      <input
-                        type="number"
-                        min={0}
-                        placeholder="Stock"
-                        value={v.stock}
-                        onChange={(e) => updateVariantField(idx, 'stock', Number(e.target.value))}
-                        required
-                        style={{ padding: '6px 10px', border: '1px solid rgba(6,34,60,0.2)', fontSize: 12 }}
-                      />
-                      {formData.variants.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => removeVariant(idx)}
-                          style={{ color: '#C33', fontSize: 14, padding: '4px' }}
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#06223C', marginTop: 6 }}>
-                <input
-                  type="checkbox"
-                  checked={formData.isActive}
-                  onChange={(e) => setFormData({ ...formData, isActive: e.target.checked })}
-                />
-                Product is active and visible in store
-              </label>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="btn-primary"
-                style={{ width: '100%', justifyContent: 'center', padding: '14px', marginTop: 12 }}
-              >
-                {submitting ? 'SAVING PRODUCT...' : 'SAVE PRODUCT'}
-              </button>
-            </form>
           </div>
-        </div>
+          <Pagination pagination={products.data.pagination} onPage={setPage} />
+        </>
       )}
 
-      <Footer />
+      {form && (
+        <Modal
+          wide
+          title={form.id ? 'Edit product' : 'New product'}
+          onClose={() => !saving && setForm(null)}
+          footer={
+            <>
+              <button className="adm-btn adm-btn--ghost" onClick={() => setForm(null)} disabled={saving}>Cancel</button>
+              <button className="adm-btn adm-btn--gold" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save product'}</button>
+            </>
+          }
+        >
+          <div className="adm-form">
+            {formError && <ErrorNote message={formError} />}
+
+            <div className="adm-row">
+              <Field label="Name"><input className="adm-input" value={form.name} onChange={(e) => setField('name', e.target.value)} /></Field>
+              <Field label="URL slug" hint="Leave blank to generate from the name."><input className="adm-input" value={form.slug} onChange={(e) => setField('slug', e.target.value)} /></Field>
+            </div>
+
+            <Field label="Description"><textarea className="adm-textarea" value={form.description} onChange={(e) => setField('description', e.target.value)} /></Field>
+
+            <div className="adm-row">
+              <Field label="Price (₹)"><input className="adm-input" type="number" min={0} value={form.price} onChange={(e) => setField('price', e.target.value)} /></Field>
+              <Field label="Category">
+                <select className="adm-select" value={form.category} onChange={(e) => setField('category', e.target.value)}>
+                  <option value="">Select…</option>
+                  {categories.data?.categories.map((c) => <option key={c._id} value={c._id}>{c.name}{c.isActive ? '' : ' (inactive)'}</option>)}
+                </select>
+              </Field>
+            </div>
+
+            <Field label="Image URLs or paths" hint="One per line. The first is the main image.">
+              <textarea className="adm-textarea" value={form.images} onChange={(e) => setField('images', e.target.value)} />
+            </Field>
+
+            <div>
+              <div className="adm-section" style={{ marginTop: 0 }}><h4>Variants &amp; stock</h4></div>
+              {form.variants.map((v, i) => (
+                <div className="adm-variant" key={i}>
+                  <input className="adm-input" list="adm-sizes" placeholder="Size" value={v.size} onChange={(e) => setVariant(i, { size: e.target.value })} aria-label="Size" />
+                  <input className="adm-input" placeholder="Colour" value={v.color} onChange={(e) => setVariant(i, { color: e.target.value })} aria-label="Colour" />
+                  <input className="adm-input" type="number" min={0} value={v.stock} onChange={(e) => setVariant(i, { stock: e.target.value })} aria-label="Stock" />
+                  <button type="button" className="adm-iconbtn" aria-label="Remove variant" disabled={form.variants.length === 1} onClick={() => setField('variants', form.variants.filter((_, idx) => idx !== i))}>×</button>
+                </div>
+              ))}
+              <datalist id="adm-sizes">{SIZE_OPTIONS.map((s) => <option key={s} value={s} />)}</datalist>
+              <button type="button" className="adm-btn adm-btn--ghost adm-btn--sm" onClick={() => setField('variants', [...form.variants, { size: 'M', color: '', stock: '0' }])}>+ Add variant</button>
+            </div>
+
+            <label className="adm-check">
+              <input type="checkbox" checked={form.isActive} onChange={(e) => setField('isActive', e.target.checked)} />
+              Visible on the storefront
+            </label>
+          </div>
+        </Modal>
+      )}
     </>
   )
 }

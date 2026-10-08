@@ -3,10 +3,10 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
-import { formatPrice } from '@/lib/data'
+import { formatPrice } from '@/lib/format'
 import { useAuth } from '@/context/AuthContext'
-import { addToWishlist, removeFromWishlist } from '@/lib/wishlist'
-import { addToCart } from '@/lib/cart'
+import { addToWishlist, removeFromWishlist } from '@/lib/api/wishlist'
+import { addToCart } from '@/lib/api/cart'
 
 export interface AnyProduct {
   _id?: string

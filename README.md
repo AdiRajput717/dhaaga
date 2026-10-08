@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Dhaaga-E-Jashn
 
-## Getting Started
+Online store for Indian kurtas and kurtis. Next.js (App Router, TypeScript) storefront, an Express + MongoDB API, and an admin dashboard.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+app/            Next.js routes
+  admin/        Admin dashboard (own layout, sidebar, auth guard)
+components/
+  layout/       Navbar, Footer
+  home/         Homepage sections
+  shop/         ProductCard, ProductGrid, QuickViewModal
+  auth/         GoogleLoginButton
+  ui/           Toast, BagCountManager
+  admin/        Admin UI kit (tables, modals, badges…)
+context/        AuthContext (session, cart + wishlist counts)
+lib/
+  api/          One module per API area (auth, cart, products, admin…), shared fetch client
+  hooks/        useFetch, useDebounced
+  content.ts    Static homepage content
+  format.ts     formatPrice / formatDate
+backend/        Express 5 + Mongoose API (see backend/README.md)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run it locally
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# 1. API
+cd backend
+cp .env.example .env          # fill in MONGODB_URI and JWT_SECRET
+npm install
+npm run seed                  # sample categories + products (optional)
+npm run create-admin -- you@example.com 'a-strong-password' 'Your Name'
+npm run dev                   # http://localhost:5000
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# 2. Storefront + admin (new terminal, repo root)
+cp .env.example .env.local
+npm install
+npm run dev                   # http://localhost:3000
+```
 
-## Learn More
+Sign in at `/login` with the admin account, then open **`/admin`**.
 
-To learn more about Next.js, take a look at the following resources:
+## Admin dashboard
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Page | What it does |
+| --- | --- |
+| Overview | Revenue, orders, 14-day sales chart, order pipeline, best sellers, low-stock alerts, recent orders |
+| Orders | Search/filter, order detail, move through confirmed → processing → shipped → delivered, or cancel (restocks inventory) |
+| Products | Create/edit with variants and stock, hide/show, search, paging |
+| Categories | Create/edit, product counts, activate/deactivate |
+| Reviews | Show/hide or delete customer reviews |
+| Customers | Search users, grant or remove admin access |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Access is enforced by the API (every `/api/admin/*` route requires an admin session); the frontend guard only decides what to show.
 
-## Deploy on Vercel
+## Tests
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+cd backend
+MONGODB_URI_TEST=mongodb://127.0.0.1:27017/dhaaga_test npm test
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The suite wipes its database, so the name must contain `test`. Frontend checks: `npx tsc --noEmit` and `npm run build`.
+
+## Deploying with separate domains
+
+If the site and the API are on different domains (for example Vercel + Render), set `COOKIE_SAMESITE=none` and `CLIENT_URL=https://your-site` on the API, and `NEXT_PUBLIC_API_URL=https://your-api/api` on the frontend. Otherwise the login cookie will not be sent.

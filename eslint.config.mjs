@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Express API (CommonJS) has its own tests; not part of the Next.js lint.
+    "backend/**",
   ]),
 ]);
 

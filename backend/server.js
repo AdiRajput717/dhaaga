@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 const cookieParser = require("cookie-parser");
+const helmet = require("helmet");
+const mongoose = require("mongoose");
 require("dotenv").config();
 
 const { validateEnv, getAllowedOrigins } = require("./config/env");
@@ -9,6 +11,7 @@ validateEnv();
 const connectDB = require("./config/db");
 const { ensureBody } = require("./middleware/validate.middleware");
 const { notFound, errorHandler } = require("./middleware/error.middleware");
+const { apiLimiter } = require("./middleware/rateLimit.middleware");
 
 const authRoutes = require("./routes/auth.routes");
 const productRoutes = require("./routes/product.routes");
@@ -24,6 +27,10 @@ const adminRoutes = require("./routes/admin.routes");
 const app = express();
 
 app.disable("x-powered-by");
+
+// Secure default headers. The API only returns JSON, and the frontend is a
+// different origin, so cross-origin resource policy must allow it.
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
 
 // Needed so req.ip is correct behind a hosting proxy (Render, Railway, etc.)
 if (process.env.NODE_ENV === "production") {
@@ -50,6 +57,8 @@ app.use(express.json({ limit: "100kb" }));
 app.use(ensureBody);
 app.use(cookieParser());
 
+app.use("/api", apiLimiter);
+
 app.use("/api/auth", authRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/categories", categoryRoutes);
@@ -67,6 +76,17 @@ app.get("/", (req, res) => {
   });
 });
 
+// For uptime monitors / hosting health checks. 503 while the DB is down.
+app.get("/health", (req, res) => {
+  const dbConnected = mongoose.connection.readyState === 1;
+
+  res.status(dbConnected ? 200 : 503).json({
+    status: dbConnected ? "ok" : "degraded",
+    database: dbConnected ? "connected" : "disconnected",
+    uptime: Math.round(process.uptime()),
+  });
+});
+
 app.use(notFound);
 app.use(errorHandler);
 
@@ -75,10 +95,29 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`Dhaaga backend running on http://localhost:${PORT}`);
   });
+
+  // Finish in-flight requests and close the DB cleanly on deploy/restart.
+  const shutdown = (signal) => {
+    console.log(`${signal} received, shutting down...`);
+
+    server.close(async () => {
+      await mongoose.connection.close();
+      process.exit(0);
+    });
+
+    setTimeout(() => process.exit(1), 10000).unref();
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 };
+
+process.on("unhandledRejection", (reason) => {
+  console.error("Unhandled promise rejection:", reason);
+});
 
 if (require.main === module) {
   startServer();

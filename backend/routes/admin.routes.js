@@ -4,6 +4,7 @@ const {
   getDashboardStats,
   getRecentOrders,
   getAdminProducts,
+  getAdminProductById,
   getAdminCategories,
   getAdminReviews,
   setReviewApproval,
@@ -23,6 +24,7 @@ router.get("/dashboard", getDashboardStats);
 router.get("/recent-orders", getRecentOrders);
 
 router.get("/products", getAdminProducts);
+router.get("/products/:id", validateObjectId("id"), getAdminProductById);
 router.get("/categories", getAdminCategories);
 
 router.get("/reviews", getAdminReviews);

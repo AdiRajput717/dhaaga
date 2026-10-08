@@ -37,10 +37,22 @@ const createRateLimiter = ({ windowMs, max, message }) => {
   };
 };
 
+const fromEnv = (key, fallback) => {
+  const value = Number(process.env[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
+// Login / register / Google sign-in: brute-force protection.
 const authLimiter = createRateLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: fromEnv("AUTH_RATE_LIMIT_MAX", 20),
   message: "Too many attempts, please try again in a few minutes",
 });
 
-module.exports = { createRateLimiter, authLimiter };
+// Everything else under /api: a generous ceiling against scraping/abuse.
+const apiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: fromEnv("API_RATE_LIMIT_MAX", 300),
+});
+
+module.exports = { createRateLimiter, authLimiter, apiLimiter };

@@ -1,7 +1,7 @@
 "use client";
 
 import { GoogleLogin } from "@react-oauth/google";
-import { googleLogin } from "@/lib/auth";
+import { googleLogin } from "@/lib/api/auth";
 
 type GoogleLoginButtonProps = {
   onSuccess?: () => void;
